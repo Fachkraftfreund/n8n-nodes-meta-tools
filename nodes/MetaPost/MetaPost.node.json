@@ -1,0 +1,13 @@
+{
+	"node": "n8n-nodes-meta-post.metaPost",
+	"nodeVersion": "1.0",
+	"codexVersion": "1.0",
+	"categories": ["Marketing & Content"],
+	"resources": {
+		"primaryDocumentation": [
+			{
+				"url": "https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/content-publishing"
+			}
+		]
+	}
+}

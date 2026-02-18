@@ -1,0 +1,41 @@
+{
+	"name": "n8n-nodes-meta-post",
+	"version": "0.1.0",
+	"description": "n8n community node to post images and videos to Facebook Pages and Instagram",
+	"license": "MIT",
+	"keywords": [
+		"n8n-community-node-package",
+		"n8n",
+		"facebook",
+		"instagram",
+		"meta",
+		"social-media"
+	],
+	"main": "dist/nodes/MetaPost/MetaPost.node.js",
+	"scripts": {
+		"build": "tsc && cp nodes/MetaPost/metaPost.svg dist/nodes/MetaPost/",
+		"dev": "tsc --watch",
+		"lint": "tsc --noEmit"
+	},
+	"files": [
+		"dist"
+	],
+	"n8n": {
+		"n8nNodesApiVersion": 1,
+		"nodes": [
+			"dist/nodes/MetaPost/MetaPost.node.js"
+		],
+		"credentials": []
+	},
+	"dependencies": {
+		"ffmpeg-static": "^5.2.0"
+	},
+	"devDependencies": {
+		"@types/node": "^20.0.0",
+		"n8n-workflow": "*",
+		"typescript": "~5.7.0"
+	},
+	"peerDependencies": {
+		"n8n-workflow": "*"
+	}
+}

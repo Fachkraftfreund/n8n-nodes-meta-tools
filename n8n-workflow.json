@@ -1,0 +1,1521 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "26d3ef6a-b471-4a84-956e-7d00a574e547",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1488,
+        144
+      ],
+      "id": "ae2b2ad7-0191-45b4-8fc6-74c312e48d1c",
+      "name": "Webhook",
+      "webhookId": "26d3ef6a-b471-4a84-956e-7d00a574e547"
+    },
+    {
+      "parameters": {
+        "httpRequestMethod": "POST",
+        "graphApiVersion": "v23.0",
+        "node": "={{ $json.body.instagram_account_id }}",
+        "edge": "media",
+        "options": {
+          "queryParameters": {
+            "parameter": [
+              {
+                "name": "=image_url",
+                "value": "={{ $json.body.image_url }}"
+              },
+              {
+                "name": "caption",
+                "value": "={{ $json.copy }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.facebookGraphApi",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        -448
+      ],
+      "id": "2c84baa8-d7f9-4f96-8d97-937325e5fe1f",
+      "name": "Create Instagram Container",
+      "alwaysOutputData": false,
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "36twlONGHIjCkpPR",
+          "name": "Facebook Graph account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "httpRequestMethod": "POST",
+        "graphApiVersion": "v23.0",
+        "node": "={{ $('Webhook').item.json.body.instagram_account_id }}",
+        "edge": "media_publish",
+        "options": {
+          "queryParameters": {
+            "parameter": [
+              {
+                "name": "image_url",
+                "value": "={{ $('Webhook').item.json.body.image_url }}"
+              },
+              {
+                "name": "caption",
+                "value": "={{ $('Decode Copy').item.copy }}"
+              },
+              {
+                "name": "creation_id",
+                "value": "={{ $json.id }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.facebookGraphApi",
+      "typeVersion": 1,
+      "position": [
+        784,
+        -448
+      ],
+      "id": "5cb2e39f-9f22-44a5-a584-a06b8d74f592",
+      "name": "Publish Instagram Post",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "36twlONGHIjCkpPR",
+          "name": "Facebook Graph account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1344,
+        288
+      ],
+      "id": "a991f454-5fa5-4e26-af43-7e36190b2922",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "cWMdfPtWjPhlXjA5",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/cWMdfPtWjPhlXjA5",
+          "cachedResultName": "Update Coda Row"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "table_id": "grid-NLsXQlHxEe",
+            "row_id": "={{ $('Webhook').item.json.body.row_id }}",
+            "values_by_column": "={{ {\n  \"c-9ExyH13AOO\": new Date(),\n  \"c-e8IwqcLiGz\": $('Webhook').item.json.body.media_type == 'Video' ? $('Post Facebook Video').item.json.id : ($('Post Facebook Image').item.json.id + '_' + $('Create Facebook Post').item.json.id),\n  \"c-O4LAQsMKxI\": $('Get Instagram Url')?.item.json.permalink,\n  \"c-3oq2GSUxEw\": \"\"\n} }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "table_id",
+              "displayName": "table_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "row_id",
+              "displayName": "row_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "values_by_column",
+              "displayName": "values_by_column",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1568,
+        288
+      ],
+      "id": "c34681ad-99dd-4bef-99b5-2da38b4bc08c",
+      "name": "Set Coda Row to Posted"
+    },
+    {
+      "parameters": {
+        "graphApiVersion": "v23.0",
+        "node": "={{ $json.body.facebook_page_id }}",
+        "options": {
+          "fields": {
+            "field": [
+              {
+                "name": "access_token"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.facebookGraphApi",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        624
+      ],
+      "id": "ff72f4ba-3914-4fa8-a79c-747817a4cdb3",
+      "name": "Get Page Access Token",
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "36twlONGHIjCkpPR",
+          "name": "Facebook Graph account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/{{ $('Get Page Access Token').item.json.id }}/feed",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "message",
+              "value": "={{ $('Decode Copy').item.json.copy }}"
+            },
+            {
+              "name": "attached_media[0]",
+              "value": "={\"media_fbid\":\"{{ $json.id }}\"}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $('Get Page Access Token').item.json.access_token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        192,
+        384
+      ],
+      "id": "4e24c45d-a367-4426-a6a6-f0d6c063f827",
+      "name": "Create Facebook Post"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {
+          "clashHandling": {
+            "values": {
+              "resolveClash": "addSuffix"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -256,
+        384
+      ],
+      "id": "a71cf611-7f15-4cc7-a289-ef31fcb2a3ee",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.media_type }}",
+                    "rightValue": "Bild",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "0e0559df-f9a6-4622-8817-4c60eb13710b"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Bild"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "957e4709-d5f9-4ba5-addf-47cc6afe1e8d",
+                    "leftValue": "={{ $json.body.media_type }}",
+                    "rightValue": "Video",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Video"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -992,
+        144
+      ],
+      "id": "bebcc775-4266-4928-a4a0-643ae5eb5544",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -256,
+        576
+      ],
+      "id": "e6238f1c-b0c2-42c9-ae2e-389f8a4b4a32",
+      "name": "Merge2"
+    },
+    {
+      "parameters": {
+        "content": "## Instagram",
+        "height": 800,
+        "width": 1776,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -544,
+        -512
+      ],
+      "typeVersion": 1,
+      "id": "83ee0b8b-6fb9-407c-bf45-2974b87da4df",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "httpRequestMethod": "POST",
+        "graphApiVersion": "v23.0",
+        "node": "={{ $('Webhook').item.json.body.instagram_account_id }}",
+        "edge": "media",
+        "options": {
+          "queryParameters": {
+            "parameter": [
+              {
+                "name": "=video_url",
+                "value": "={{ $json.data.tasks[0].result.files[0].url }}"
+              },
+              {
+                "name": "caption",
+                "value": "={{ $('Decode Copy').item.json.copy }}"
+              },
+              {
+                "name": "media_type",
+                "value": "REELS"
+              },
+              {
+                "name": "share_to_feed",
+                "value": "true"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.facebookGraphApi",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        -112
+      ],
+      "id": "6cdeb0a9-4eba-4420-bb35-4e2f273edc4e",
+      "name": "Create Instagram Container1",
+      "alwaysOutputData": false,
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "36twlONGHIjCkpPR",
+          "name": "Facebook Graph account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "httpRequestMethod": "POST",
+        "graphApiVersion": "v23.0",
+        "node": "={{ $('Webhook').item.json.body.instagram_account_id }}",
+        "edge": "media_publish",
+        "options": {
+          "queryParameters": {
+            "parameter": [
+              {
+                "name": "creation_id",
+                "value": "={{ $json.id }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.facebookGraphApi",
+      "typeVersion": 1,
+      "position": [
+        528,
+        -192
+      ],
+      "id": "90669a6a-8cb8-4179-b23c-d6e994a18b81",
+      "name": "Publish Instagram Post1",
+      "retryOnFail": false,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "36twlONGHIjCkpPR",
+          "name": "Facebook Graph account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nfor (const item of $input.all()) {\n  const suffix = decodeURIComponent(item.json.body.hash_suffix ?? \"\");\n  const copy = decodeURIComponent(item.json.body.copy);\n  item.json.copy = (!suffix || copy.endsWith(suffix) ? copy : copy + '\\n' + suffix).replace(/\\n+/g, '\\n');\n}\n\nreturn $input.all();\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1168,
+        144
+      ],
+      "id": "b08e0b66-9685-40c0-b3af-0dc7475e2c9f",
+      "name": "Decode Copy"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/{{ $json.id }}/videos",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "published",
+              "value": "true"
+            },
+            {
+              "name": "file_url",
+              "value": "={{ $json.data.tasks[0].result.files[0].url }}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $json.access_token }}"
+            },
+            {
+              "name": "description",
+              "value": "={{ $('Decode Copy').item.json.copy }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -32,
+        576
+      ],
+      "id": "5e54c71c-dcc3-4636-a84f-4938c8347020",
+      "name": "Post Facebook Video",
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "36twlONGHIjCkpPR",
+          "name": "Facebook Graph account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/{{ $json.id_2 }}/photos",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "published",
+              "value": "false"
+            },
+            {
+              "name": "url",
+              "value": "={{ $json.data_1?.tasks[0].result.files[0].url ?? $('Webhook').item.json.body.image_url }}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $json.access_token_2 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -32,
+        384
+      ],
+      "id": "1a491ae0-ac68-48e7-a058-5b28d7866e62",
+      "name": "Post Facebook Image",
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "36twlONGHIjCkpPR",
+          "name": "Facebook Graph account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "graphApiVersion": "v23.0",
+        "node": "={{ $json.id }}",
+        "edge": "=",
+        "options": {
+          "queryParameters": {
+            "parameter": [
+              {
+                "name": "fields",
+                "value": "permalink"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.facebookGraphApi",
+      "typeVersion": 1,
+      "position": [
+        1056,
+        -304
+      ],
+      "id": "7307644b-ae2b-4bff-99bf-bc0e14edeb27",
+      "name": "Get Instagram Url",
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "36twlONGHIjCkpPR",
+          "name": "Facebook Graph account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "graphApiVersion": "v23.0",
+        "node": "=",
+        "edge": "={{ $json.id }}",
+        "options": {
+          "queryParameters": {
+            "parameter": [
+              {
+                "name": "=fields",
+                "value": "=status_code"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.facebookGraphApi",
+      "typeVersion": 1,
+      "position": [
+        160,
+        -112
+      ],
+      "id": "b833c9aa-2f35-45d2-a0cd-1dc8854cc5c5",
+      "name": "Get Status",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "maxTries": 5,
+      "alwaysOutputData": false,
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "36twlONGHIjCkpPR",
+          "name": "Facebook Graph account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        528,
+        64
+      ],
+      "id": "d9761b1f-afb3-4009-8c16-82644796539a",
+      "name": "Wait",
+      "webhookId": "5ce4d249-c182-42d0-84a8-efd7603da82f"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2c84cef4-3b27-446b-982d-1c59a6318ba9",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -256,
+        -448
+      ],
+      "id": "08595090-6406-4a8f-b39d-a9ac205ae663",
+      "name": "If Success"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "cWMdfPtWjPhlXjA5",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/cWMdfPtWjPhlXjA5",
+          "cachedResultName": "Update Coda Row"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "table_id": "grid-NLsXQlHxEe",
+            "row_id": "={{ $('Webhook').item.json.body.row_id }}",
+            "values_by_column": "={{ {\n  \"c-3oq2GSUxEw\": \"permission\",\n} }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "table_id",
+              "displayName": "table_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "row_id",
+              "displayName": "row_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "values_by_column",
+              "displayName": "values_by_column",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object"
+            },
+            {
+              "id": "doc",
+              "displayName": "doc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        864,
+        -752
+      ],
+      "id": "90bdbb59-4c8b-4a0c-9ce1-7ee564728c6b",
+      "name": "Set Coda Row to Permission Error"
+    },
+    {
+      "parameters": {
+        "errorMessage": "Permission Error"
+      },
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        -752
+      ],
+      "id": "a43f90b6-07bc-49cd-9955-9f574f06cf40",
+      "name": "Stop and Error"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2c84cef4-3b27-446b-982d-1c59a6318ba9",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -256,
+        -112
+      ],
+      "id": "687497b5-deac-4c29-97a6-152ce566851f",
+      "name": "If Success1"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.status_code }}",
+                    "rightValue": "FINISHED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "9de19018-98be-40a8-8266-beac7647e501"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Finished"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "f1eed534-1f1c-466f-a3f5-83873d637db8",
+                    "leftValue": "={{ $json.status_code }}",
+                    "rightValue": "ERROR",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Error"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "d51b4e41-e949-47b3-9311-9a18b5d718ac",
+                    "leftValue": "={{ true }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Else"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [
+        352,
+        -128
+      ],
+      "id": "a5ad0751-2fb6-4116-b664-5d8000b5b1ab",
+      "name": "Switch1"
+    },
+    {
+      "parameters": {
+        "amount": 15
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -16,
+        -112
+      ],
+      "id": "c8c7539f-be13-4aa8-9777-7572eb580807",
+      "name": "Wait1",
+      "webhookId": "238eb911-b707-4268-b1ce-0f88274b7a47"
+    },
+    {
+      "parameters": {
+        "errorMessage": "Permission Error"
+      },
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        528,
+        -64
+      ],
+      "id": "debf4c30-80bc-4599-bf3c-dcfefa298652",
+      "name": "Stop and Error1"
+    },
+    {
+      "parameters": {
+        "respondWith": "noData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        -480,
+        -672
+      ],
+      "id": "7cc44c8a-debd-4eb2-bee7-254aa4df3fe0",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "respondWith": "noData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        -256,
+        -272
+      ],
+      "id": "37daa7eb-ba09-42d1-9e21-4b8093df5942",
+      "name": "Respond to Webhook1"
+    },
+    {
+      "parameters": {
+        "method": "HEAD",
+        "url": "={{ $json.body.image_url }}",
+        "options": {
+          "response": {
+            "response": {}
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1120,
+        -112
+      ],
+      "id": "f2203e4e-a59c-4cce-9dc9-183bf206a96f",
+      "name": "HTTP Request",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "2e5e95ed-e4e5-4940-b2d7-c67c7512a4ab",
+              "leftValue": "={{ $json.headers['www-authenticate'] }}",
+              "rightValue": "Only photo or video can be accepted as media type.",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -48,
+        -336
+      ],
+      "id": "647390f8-b793-4570-be11-57fdcf78d3d6",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "httpRequestMethod": "POST",
+        "graphApiVersion": "v23.0",
+        "node": "={{ $('Webhook').item.json.body.instagram_account_id }}",
+        "edge": "media",
+        "options": {
+          "queryParameters": {
+            "parameter": [
+              {
+                "name": "=image_url",
+                "value": "={{ $json.data.tasks[0].result.files[0].url }}"
+              },
+              {
+                "name": "caption",
+                "value": "={{ $('Decode Copy').item.json.copy }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.facebookGraphApi",
+      "typeVersion": 1,
+      "position": [
+        336,
+        -336
+      ],
+      "id": "50e39e4b-b2b7-428e-8c33-0de4bb8244be",
+      "name": "Create Instagram Container2",
+      "alwaysOutputData": false,
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "36twlONGHIjCkpPR",
+          "name": "Facebook Graph account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2c84cef4-3b27-446b-982d-1c59a6318ba9",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        528,
+        -336
+      ],
+      "id": "524f9b8d-d82b-4481-95db-9f941540336b",
+      "name": "If Success2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sync.api.cloudconvert.com/v2/jobs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "cloudConvertOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"tasks\": {\n    \"import\": {\n      \"operation\": \"import/url\",\n      \"url\": \"{{ $('Webhook').item.json.body.image_url }}\"\n    },\n    \"convert\": {\n      \"operation\": \"convert\",\n      \"input\": \"import\",\n      \"input_format\": \"{{ $('Webhook').item.json.body.file_type }}\",\n      \"output_format\": \"png\",\n\n      \"width\": 1080,\n      \"height\": 1920,\n      \"fit\": \"max\",\n\n      \"remove_metadata\": true\n    },\n    \"export\": {\n      \"operation\": \"export/url\",\n      \"input\": \"convert\"\n    }\n  }\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        144,
+        -336
+      ],
+      "id": "f2775781-3d10-418d-9daa-4d7fb098e5e6",
+      "name": "Convert Image",
+      "credentials": {
+        "cloudConvertOAuth2Api": {
+          "id": "rYA1llqhNBTD3THn",
+          "name": "CloudConvert account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sync.api.cloudconvert.com/v2/jobs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "cloudConvertOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"tasks\": {\n    \"import\": {\n      \"operation\": \"import/url\",\n      \"url\": \"{{ $('Webhook').item.json.body.image_url }}\"\n    },\n    \"convert\": {\n      \"operation\": \"convert\",\n      \"input\": \"import\",\n      \"input_format\": \"{{ $('Webhook').item.json.body.file_type }}\",\n      \"output_format\": \"mp4\",\n\n      \"video_codec\": \"x264\",\n      \"audio_codec\": \"aac\",\n\n      \"audio_bitrate\": \"128000\",\n      \"audio_channels\": 2,\n      \"audio_sampling_rate\": 48000,\n\n      \"crf\": 23,\n      \"preset\": \"medium\",\n      \"fps\": 30,\n\n      \"width\": 1080,\n      \"height\": 1920,\n      \"fit\": \"max\",\n\n      \"remove_metadata\": true,\n      \"faststart\": true\n    },\n    \"export\": {\n      \"operation\": \"export/url\",\n      \"input\": \"convert\"\n    }\n  }\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -800,
+        176
+      ],
+      "id": "6ddfecd0-811d-41d5-acc4-167f0ad7435c",
+      "name": "Convert Video",
+      "credentials": {
+        "cloudConvertOAuth2Api": {
+          "id": "rYA1llqhNBTD3THn",
+          "name": "CloudConvert account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get Page Access Token",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Decode Copy",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Instagram Container": {
+      "main": [
+        [
+          {
+            "node": "If Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Instagram Post": {
+      "main": [
+        [
+          {
+            "node": "Get Instagram Url",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Set Coda Row to Posted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Coda Row to Posted": {
+      "main": [
+        []
+      ]
+    },
+    "Get Page Access Token": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Create Facebook Post": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Post Facebook Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Create Instagram Container",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Convert Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge2": {
+      "main": [
+        [
+          {
+            "node": "Post Facebook Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Instagram Container1": {
+      "main": [
+        [
+          {
+            "node": "If Success1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Publish Instagram Post1": {
+      "main": [
+        [
+          {
+            "node": "Get Instagram Url",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decode Copy": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Facebook Video": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Post Facebook Image": {
+      "main": [
+        [
+          {
+            "node": "Create Facebook Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Instagram Url": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Status": {
+      "main": [
+        [
+          {
+            "node": "Switch1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Get Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Success": {
+      "main": [
+        [
+          {
+            "node": "Publish Instagram Post",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Coda Row to Permission Error": {
+      "main": [
+        [
+          {
+            "node": "Stop and Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Success1": {
+      "main": [
+        [
+          {
+            "node": "Wait1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Coda Row to Permission Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch1": {
+      "main": [
+        [
+          {
+            "node": "Publish Instagram Post1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Stop and Error1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait1": {
+      "main": [
+        [
+          {
+            "node": "Get Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Convert Image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Coda Row to Permission Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Instagram Container2": {
+      "main": [
+        [
+          {
+            "node": "If Success2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Success2": {
+      "main": [
+        [
+          {
+            "node": "Publish Instagram Post",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Coda Row to Permission Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert Image": {
+      "main": [
+        [
+          {
+            "node": "Create Instagram Container2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert Video": {
+      "main": [
+        [
+          {
+            "node": "Create Instagram Container1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "Webhook": [
+      {
+        "headers": {
+          "host": "n8n-fachkraftfreund.sliplane.app",
+          "user-agent": "Coda-Server-Fetcher",
+          "content-length": "680",
+          "accept": "*/*",
+          "accept-encoding": "gzip,deflate",
+          "authorization": "Bearer",
+          "content-type": "application/json",
+          "x-amzn-trace-id": "Root=1-6981cbbc-4af5ea1b865124fcb7ed2af6;Parent=8e82b462e0bbc56f;Sampled=0",
+          "x-fetcher-request-token": "djEtdjEtVWJmYXNnM0d3WXlkSWprelFBYkVTQT09LXVjZnJhZlkzckE5ZExFTGctYVBFSm9tcWtNK0RrZE11S3d1T3hxUE00QVZjR2Z0cEZZUmFtRkJvWEhLYlJJWWtTUHFZR053THhJTTVJUVpzdXRORmdvdz09",
+          "x-forwarded-for": "52.37.21.175",
+          "x-forwarded-host": "n8n-fachkraftfreund.sliplane.app",
+          "x-forwarded-proto": "https"
+        },
+        "params": {},
+        "query": {},
+        "body": {
+          "copy": "In%20einem%20ruhigen%20Umfeld%20f%C3%A4llt%20Fortschritt%20leichter.%20Unsere%20R%C3%A4ume%20schaffen%20die%20Balance%20zwischen%20Therapie%20und%20Entspannung.%20%F0%9F%8C%B1",
+          "image_url": "https://codahosted.io/docs/9m2lHFV7VK/blobs/bl-pYGmT_5024/a9ae4090d3049d87823670b365b18bac82a76e41c6c2154ba1d9b6733ac97bfd3f790acbdf6e4dda5a53ee7884303d1b167dd1f7970e170a0c46be9021813dae65f2e047b10e5f75a766af48086838d6da471c091370187888730057b3fe9ee678ce88d2",
+          "instagram_account_id": "17841478395050274",
+          "facebook_page_id": "427564720449248",
+          "row_id": "i-NttpDqMTYG",
+          "media_type": "Bild",
+          "hash_suffix": "#physiotherapie #breitgrafmacku #praxisalltag #praxisrheinbach",
+          "file_type": "jpg"
+        },
+        "webhookUrl": "https://n8n-fachkraftfreund.sliplane.app/webhook/26d3ef6a-b471-4a84-956e-7d00a574e547",
+        "executionMode": "production"
+      }
+    ]
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9e29ca5a596b13c5ba1bd2c72912c56c213132c53c9d4fbc50f574632895fc96"
+  }
+}
