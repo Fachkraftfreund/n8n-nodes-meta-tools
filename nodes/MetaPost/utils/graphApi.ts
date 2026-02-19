@@ -31,6 +31,29 @@ export async function getPageAccessToken(
 
 // ── Instagram: Container Creation ──────────────────────────────────
 
+export interface FullResponse {
+	body: any;
+	headers: Record<string, string>;
+	statusCode: number;
+}
+
+export async function tryCreateIgImageContainer(
+	ctx: IExecuteFunctions,
+	userAccessToken: string,
+	igAccountId: string,
+	imageUrl: string,
+	caption: string,
+	apiVersion: string,
+): Promise<FullResponse> {
+	return ctx.helpers.httpRequest({
+		method: 'POST',
+		url: `${GRAPH_BASE}/${apiVersion}/${igAccountId}/media`,
+		qs: { image_url: imageUrl, caption, access_token: userAccessToken },
+		ignoreHttpStatusErrors: true,
+		returnFullResponse: true,
+	}) as Promise<FullResponse>;
+}
+
 export async function createIgImageContainer(
 	ctx: IExecuteFunctions,
 	userAccessToken: string,

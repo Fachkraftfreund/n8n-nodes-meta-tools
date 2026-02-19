@@ -67,17 +67,25 @@ async function handleImage(
 	let igContainerId: string;
 
 	// Step 1: Try creating IG container with original URL
-	try {
-		const container = await graphApi.createIgImageContainer(
-			ctx, userAccessToken, instagramAccountId, mediaUrl, caption, graphApiVersion,
-		);
-		igContainerId = container.id;
-	} catch (error) {
-		const msg = (error as Error).message || '';
-		const isFormatError = msg.includes('Only photo or video can be accepted');
+	// Use ignoreHttpStatusErrors + returnFullResponse so we can inspect the response
+	// for format errors (Instagram rejects certain image formats like WebP)
+	const containerResp = await graphApi.tryCreateIgImageContainer(
+		ctx, userAccessToken, instagramAccountId, mediaUrl, caption, graphApiVersion,
+	);
+
+	if (containerResp.statusCode >= 200 && containerResp.statusCode < 300 && containerResp.body?.id) {
+		igContainerId = containerResp.body.id;
+	} else {
+		// Check for format error in response headers and body (matching workflow logic)
+		const wwwAuth = (containerResp.headers?.['www-authenticate'] as string) || '';
+		const bodyMsg = containerResp.body?.error?.message || '';
+		const errorText = wwwAuth + ' ' + bodyMsg;
+		const isFormatError = errorText.includes('Only photo or video can be accepted');
 
 		if (!isFormatError) {
-			throw error;
+			throw new Error(
+				`Instagram container creation failed (HTTP ${containerResp.statusCode}): ${bodyMsg || JSON.stringify(containerResp.body)}`,
+			);
 		}
 
 		// Step 2: Convert image and retry via Facebook CDN
@@ -487,13 +495,19 @@ export class MetaPost implements INodeType {
 					pairedItem: i,
 				});
 			} catch (error) {
+				const err = error as any;
+				const detail =
+					err.description ||
+					err.cause?.body?.error?.message ||
+					err.message ||
+					'Unknown error';
 				if (this.continueOnFail()) {
 					returnData.push({
-						json: { error: (error as Error).message },
+						json: { error: detail },
 						pairedItem: i,
 					});
 				} else {
-					throw new NodeOperationError(this.getNode(), error as Error, { itemIndex: i });
+					throw new NodeOperationError(this.getNode(), detail, { itemIndex: i });
 				}
 			}
 		}
