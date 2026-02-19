@@ -15,6 +15,26 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function publishIgContainerWithRetry(
+	ctx: IExecuteFunctions,
+	userAccessToken: string,
+	igAccountId: string,
+	containerId: string,
+	apiVersion: string,
+): Promise<{ id: string }> {
+	const delays = [1000, 2000, 3000, 4000, 5000];
+	for (let attempt = 0; ; attempt++) {
+		try {
+			return await graphApi.publishIgContainer(
+				ctx, userAccessToken, igAccountId, containerId, apiVersion,
+			);
+		} catch (error) {
+			if (attempt >= delays.length) throw error;
+			await sleep(delays[attempt]);
+		}
+	}
+}
+
 function prepareCaption(caption: string, hashSuffix: string): string {
 	let result = caption;
 	if (hashSuffix && !result.endsWith(hashSuffix)) {
@@ -122,8 +142,8 @@ async function handleImage(
 		igContainerId = retryContainer.id;
 	}
 
-	// Step 3: Publish IG post
-	const igPost = await graphApi.publishIgContainer(
+	// Step 3: Publish IG post (retry – container may still be processing)
+	const igPost = await publishIgContainerWithRetry(
 		ctx, userAccessToken, instagramAccountId, igContainerId, graphApiVersion,
 	);
 
@@ -240,8 +260,8 @@ async function handleVideo(
 		throw new Error('Instagram container processing timed out after polling');
 	}
 
-	// Step 6: Publish IG Reel
-	const igPost = await graphApi.publishIgContainer(
+	// Step 6: Publish IG Reel (retry – may briefly lag behind status poll)
+	const igPost = await publishIgContainerWithRetry(
 		ctx, userAccessToken, instagramAccountId, igContainer.id, graphApiVersion,
 	);
 
