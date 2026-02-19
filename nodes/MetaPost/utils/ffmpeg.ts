@@ -103,13 +103,17 @@ export async function convertVideo(
 ): Promise<Buffer> {
 	const ffmpeg = ensureFfmpeg();
 
-	const tmpFile = path.join(
+	const tmpPrefix = path.join(
 		os.tmpdir(),
-		`metapost_${Date.now()}_${Math.random().toString(36).slice(2)}.mp4`,
+		`metapost_${Date.now()}_${Math.random().toString(36).slice(2)}`,
 	);
+	const tmpInput = `${tmpPrefix}_in.mp4`;
+	const tmpOutput = `${tmpPrefix}_out.mp4`;
+
+	fs.writeFileSync(tmpInput, inputBuffer);
 
 	const args = [
-		'-i', 'pipe:0',
+		'-i', tmpInput,
 		'-c:v', options.videoCodec,
 		'-crf', options.crf.toString(),
 		'-preset', options.preset,
@@ -122,19 +126,15 @@ export async function convertVideo(
 		'-map_metadata', '-1',
 		'-f', 'mp4',
 		'-y',
-		tmpFile,
+		tmpOutput,
 	];
 
 	try {
-		await runFfmpegToFile(ffmpeg, args, inputBuffer);
-		return fs.readFileSync(tmpFile);
+		await runFfmpegFileToFile(ffmpeg, args);
+		return fs.readFileSync(tmpOutput);
 	} finally {
-		try {
-			if (fs.existsSync(tmpFile)) {
-				fs.unlinkSync(tmpFile);
-			}
-		} catch {
-			// Ignore cleanup errors
+		for (const f of [tmpInput, tmpOutput]) {
+			try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
 		}
 	}
 }
@@ -188,12 +188,12 @@ function runFfmpegPipe(bin: string, args: string[], inputBuffer: Buffer): Promis
 }
 
 /**
- * Run ffmpeg with stdin input and file output (for video with faststart).
+ * Run ffmpeg with file input and file output (for video — MP4 needs seeking).
  */
-function runFfmpegToFile(bin: string, args: string[], inputBuffer: Buffer): Promise<void> {
+function runFfmpegFileToFile(bin: string, args: string[]): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const proc = spawn(bin, args, {
-			stdio: ['pipe', 'pipe', 'pipe'],
+			stdio: ['ignore', 'pipe', 'pipe'],
 		});
 
 		let stderr = '';
@@ -211,8 +211,5 @@ function runFfmpegToFile(bin: string, args: string[], inputBuffer: Buffer): Prom
 		proc.on('error', (err) => {
 			reject(new Error(`Failed to spawn ffmpeg: ${err.message}`));
 		});
-
-		proc.stdin.write(inputBuffer);
-		proc.stdin.end();
 	});
 }
