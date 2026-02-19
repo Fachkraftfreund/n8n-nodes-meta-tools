@@ -123,14 +123,15 @@ export async function uploadFbPhotoFromUrl(
 	published: boolean,
 	apiVersion: string,
 ): Promise<FbPhotoResponse> {
+	const formData = new FormData();
+	formData.append('published', published.toString());
+	formData.append('url', imageUrl);
+	formData.append('access_token', pageAccessToken);
+
 	return ctx.helpers.httpRequest({
 		method: 'POST',
 		url: `${GRAPH_BASE}/${apiVersion}/${pageId}/photos`,
-		qs: {
-			url: imageUrl,
-			published: published.toString(),
-			access_token: pageAccessToken,
-		},
+		body: formData,
 	}) as Promise<FbPhotoResponse>;
 }
 
@@ -217,14 +218,14 @@ export async function createFbFeedPost(
 	mediaFbId: string,
 	apiVersion: string,
 ): Promise<FbFeedPostResponse> {
+	const formData = new FormData();
+	formData.append('message', message);
+	formData.append('attached_media[0]', JSON.stringify({ media_fbid: mediaFbId }));
+	formData.append('access_token', pageAccessToken);
+
 	return ctx.helpers.httpRequest({
 		method: 'POST',
 		url: `${GRAPH_BASE}/${apiVersion}/${pageId}/feed`,
-		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-		body: new URLSearchParams({
-			message,
-			'attached_media[0]': JSON.stringify({ media_fbid: mediaFbId }),
-			access_token: pageAccessToken,
-		}).toString(),
+		body: formData,
 	}) as Promise<FbFeedPostResponse>;
 }
