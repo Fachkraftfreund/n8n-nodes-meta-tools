@@ -1,11 +1,50 @@
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type { IExecuteFunctions } from 'n8n-workflow';
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const ffmpegPath: string = require('ffmpeg-static');
+let resolvedFfmpegPath: string | null = null;
+
+/**
+ * Ensure the ffmpeg binary exists, downloading it if necessary.
+ * ffmpeg-static's postinstall may not run in all environments (e.g. n8n Docker).
+ */
+function ensureFfmpeg(): string {
+	if (resolvedFfmpegPath) return resolvedFfmpegPath;
+
+	// eslint-disable-next-line @typescript-eslint/no-var-requires
+	const expectedPath: string = require('ffmpeg-static');
+	if (!expectedPath) {
+		throw new Error('ffmpeg-static: unsupported platform/architecture');
+	}
+
+	if (!fs.existsSync(expectedPath)) {
+		const ffmpegStaticDir = path.dirname(require.resolve('ffmpeg-static'));
+		try {
+			execSync('node install.js', {
+				cwd: ffmpegStaticDir,
+				stdio: 'pipe',
+				timeout: 120_000,
+			});
+		} catch (err) {
+			throw new Error(
+				`ffmpeg binary not found and automatic download failed. ` +
+				`Expected path: ${expectedPath}. ` +
+				`Error: ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
+
+		if (!fs.existsSync(expectedPath)) {
+			throw new Error(
+				`ffmpeg binary download completed but file still missing at ${expectedPath}`,
+			);
+		}
+	}
+
+	resolvedFfmpegPath = expectedPath;
+	return resolvedFfmpegPath;
+}
 
 export interface ImageConvertOptions {
 	maxWidth: number;
@@ -34,9 +73,7 @@ export async function convertImage(
 	inputBuffer: Buffer,
 	options: ImageConvertOptions,
 ): Promise<Buffer> {
-	if (!ffmpegPath) {
-		throw new Error('ffmpeg-static binary not found');
-	}
+	const ffmpeg = ensureFfmpeg();
 
 	const codec = options.outputFormat === 'jpeg' ? 'mjpeg' : 'png';
 	const args = [
@@ -53,7 +90,7 @@ export async function convertImage(
 
 	args.push('pipe:1');
 
-	return runFfmpegPipe(args, inputBuffer);
+	return runFfmpegPipe(ffmpeg, args, inputBuffer);
 }
 
 /**
@@ -64,9 +101,7 @@ export async function convertVideo(
 	inputBuffer: Buffer,
 	options: VideoConvertOptions,
 ): Promise<Buffer> {
-	if (!ffmpegPath) {
-		throw new Error('ffmpeg-static binary not found');
-	}
+	const ffmpeg = ensureFfmpeg();
 
 	const tmpFile = path.join(
 		os.tmpdir(),
@@ -91,7 +126,7 @@ export async function convertVideo(
 	];
 
 	try {
-		await runFfmpegToFile(args, inputBuffer);
+		await runFfmpegToFile(ffmpeg, args, inputBuffer);
 		return fs.readFileSync(tmpFile);
 	} finally {
 		try {
@@ -123,9 +158,9 @@ export async function downloadMedia(
 /**
  * Run ffmpeg with stdin input and stdout output (for images).
  */
-function runFfmpegPipe(args: string[], inputBuffer: Buffer): Promise<Buffer> {
+function runFfmpegPipe(bin: string, args: string[], inputBuffer: Buffer): Promise<Buffer> {
 	return new Promise((resolve, reject) => {
-		const proc = spawn(ffmpegPath, args, {
+		const proc = spawn(bin, args, {
 			stdio: ['pipe', 'pipe', 'pipe'],
 		});
 
@@ -155,9 +190,9 @@ function runFfmpegPipe(args: string[], inputBuffer: Buffer): Promise<Buffer> {
 /**
  * Run ffmpeg with stdin input and file output (for video with faststart).
  */
-function runFfmpegToFile(args: string[], inputBuffer: Buffer): Promise<void> {
+function runFfmpegToFile(bin: string, args: string[], inputBuffer: Buffer): Promise<void> {
 	return new Promise((resolve, reject) => {
-		const proc = spawn(ffmpegPath, args, {
+		const proc = spawn(bin, args, {
 			stdio: ['pipe', 'pipe', 'pipe'],
 		});
 
