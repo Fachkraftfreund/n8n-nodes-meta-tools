@@ -91,7 +91,7 @@ function readParams(ctx: IExecuteFunctions, i: number): MetaPostParams {
 		videoMaxWidth: (videoSettings.videoMaxWidth as number) ?? 1080,
 		videoMaxHeight: (videoSettings.videoMaxHeight as number) ?? 1920,
 		videoMaxBitrate: (videoSettings.videoMaxBitrate as string) ?? '4500k',
-		videoServeHost: (videoSettings.videoServeHost as string) ?? '',
+		videoServeUrl: (videoSettings.videoServeUrl as string) ?? '',
 		videoServePort: (videoSettings.videoServePort as number) ?? 5680,
 	};
 }
@@ -256,13 +256,13 @@ async function handleVideo(
 	// Step 2: Determine the video URL for Instagram
 	// If videoServeHost is configured, start a temp server to serve the re-encoded video.
 	// Otherwise, fall back to the original media URL (works if source is already ≤5 Mbps).
-	const useTempServer = !!params.videoServeHost;
+	const useTempServer = !!params.videoServeUrl;
 	let igVideoUrl: string;
 	let tempServer: { close: () => Promise<void> } | undefined;
 
 	if (useTempServer) {
 		const server = await startTempVideoServer(
-			convertedBuffer, params.videoServeHost, params.videoServePort,
+			convertedBuffer, params.videoServeUrl, params.videoServePort,
 		);
 		tempServer = server;
 		igVideoUrl = server.url;
@@ -544,11 +544,12 @@ export class MetaPost implements INodeType {
 						description: 'Maximum video bitrate (Instagram Reels limit is 5 Mbps)',
 					},
 					{
-						displayName: 'Public Hostname',
-						name: 'videoServeHost',
+						displayName: 'Video Serve URL',
+						name: 'videoServeUrl',
 						type: 'string',
 						default: '',
-						description: 'Public hostname or IP of this n8n server. When set, the node starts a temporary HTTP server to serve the re-encoded video to Instagram (required because FB CDN URLs are blocked by Instagram). Leave empty to use the original media URL directly.',
+						placeholder: 'http://n8n.example.com:5680',
+						description: 'Public base URL for the temporary video server. When set, the node re-encodes the video and serves it via a temp HTTP server so Instagram can fetch it (required because FB CDN URLs are blocked by Instagram). Can be http://host:port for direct access or https://host/path if behind a reverse proxy. Leave empty to use the original media URL directly.',
 					},
 					{
 						displayName: 'Serve Port',
