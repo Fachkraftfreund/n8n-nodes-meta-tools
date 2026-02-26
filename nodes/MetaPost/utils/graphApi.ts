@@ -2,7 +2,6 @@ import type { IExecuteFunctions } from 'n8n-workflow';
 import type {
 	PageTokenResponse,
 	IgContainerResponse,
-	IgPublishResponse,
 	IgPermalinkResponse,
 	IgStatusResponse,
 	FbPhotoResponse,
@@ -113,12 +112,14 @@ export async function publishIgContainer(
 	igAccountId: string,
 	creationId: string,
 	apiVersion: string,
-): Promise<IgPublishResponse> {
+): Promise<FullResponse> {
 	return ctx.helpers.httpRequest({
 		method: 'POST',
 		url: `${GRAPH_BASE}/${apiVersion}/${igAccountId}/media_publish`,
 		qs: { creation_id: creationId, access_token: userAccessToken },
-	}) as Promise<IgPublishResponse>;
+		ignoreHttpStatusErrors: true,
+		returnFullResponse: true,
+	}) as Promise<FullResponse>;
 }
 
 // ── Instagram: Permalink ───────────────────────────────────────────
@@ -229,6 +230,21 @@ export async function getFbVideoSource(
 		url: `${GRAPH_BASE}/${apiVersion}/${videoId}`,
 		qs: { fields: 'source', access_token: pageAccessToken },
 	}) as Promise<FbVideoSourceResponse>;
+}
+
+// ── Facebook: Delete Video ─────────────────────────────────────────
+
+export async function deleteFbVideo(
+	ctx: IExecuteFunctions,
+	pageAccessToken: string,
+	videoId: string,
+	apiVersion: string,
+): Promise<void> {
+	await ctx.helpers.httpRequest({
+		method: 'DELETE',
+		url: `${GRAPH_BASE}/${apiVersion}/${videoId}`,
+		qs: { access_token: pageAccessToken },
+	});
 }
 
 // ── Facebook: Feed Post ────────────────────────────────────────────

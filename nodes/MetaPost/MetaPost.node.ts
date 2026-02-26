@@ -24,14 +24,24 @@ async function publishIgContainerWithRetry(
 ): Promise<{ id: string }> {
 	const delays = [1000, 2000, 3000, 4000, 5000];
 	for (let attempt = 0; ; attempt++) {
-		try {
-			return await graphApi.publishIgContainer(
-				ctx, userAccessToken, igAccountId, containerId, apiVersion,
-			);
-		} catch (error) {
-			if (attempt >= delays.length) throw error;
-			await sleep(delays[attempt]);
+		const resp = await graphApi.publishIgContainer(
+			ctx, userAccessToken, igAccountId, containerId, apiVersion,
+		);
+
+		if (resp.statusCode >= 200 && resp.statusCode < 300 && resp.body?.id) {
+			return { id: resp.body.id };
 		}
+
+		const errorMsg = resp.body?.error?.message || JSON.stringify(resp.body);
+		const errorCode = resp.body?.error?.code;
+
+		if (attempt >= delays.length) {
+			throw new Error(
+				`Instagram publish failed (HTTP ${resp.statusCode}, code ${errorCode}): ${errorMsg}`,
+			);
+		}
+
+		await sleep(delays[attempt]);
 	}
 }
 
@@ -207,49 +217,58 @@ async function handleVideo(
 		convertedBuffer, 'video.mp4', caption, true, graphApiVersion,
 	);
 
-	// Step 3: Create IG Reel container using the ORIGINAL media URL
-	// (Facebook CDN URLs are not accessible to Instagram's processing servers)
-	const igContainer = await graphApi.createIgReelContainer(
-		ctx, userAccessToken, instagramAccountId,
-		mediaUrl, caption, graphApiVersion,
-	);
-
-	// Step 4: Poll IG container status
-	const maxPolls = 30;
-	const pollInterval = 10000;
-	let finished = false;
-
-	for (let attempt = 0; attempt < maxPolls; attempt++) {
-		await sleep(pollInterval);
-		const status = await graphApi.getIgContainerStatus(
-			ctx, userAccessToken, igContainer.id, graphApiVersion,
-		);
-
-		if (status.status_code === 'FINISHED') {
-			finished = true;
-			break;
-		}
-
-		if (status.status_code === 'ERROR' || status.status_code === 'EXPIRED') {
-			throw new Error(
-				`Instagram Reel processing failed: ${status.status || status.status_code}. ` +
-				'Ensure the video URL is publicly accessible and the video meets Instagram Reels ' +
-				'requirements (MP4 H.264, max 5 Mbps bitrate, max 90s, 9:16 aspect ratio recommended).',
-			);
-		}
-	}
-
-	if (!finished) {
-		throw new Error('Instagram Reel processing timed out after 5 minutes of polling');
-	}
-
-	// Step 5: Publish IG Reel (retry – may briefly lag behind status poll)
+	// Step 3-5: IG flow — wrapped in try-catch to clean up FB video on failure
 	let igPost: { id: string };
 	try {
+		// Step 3: Create IG Reel container using the ORIGINAL media URL
+		// (Facebook CDN URLs are not accessible to Instagram's processing servers)
+		const igContainer = await graphApi.createIgReelContainer(
+			ctx, userAccessToken, instagramAccountId,
+			mediaUrl, caption, graphApiVersion,
+		);
+
+		// Step 4: Poll IG container status
+		const maxPolls = 30;
+		const pollInterval = 10000;
+		let finished = false;
+
+		for (let attempt = 0; attempt < maxPolls; attempt++) {
+			await sleep(pollInterval);
+			const status = await graphApi.getIgContainerStatus(
+				ctx, userAccessToken, igContainer.id, graphApiVersion,
+			);
+
+			if (status.status_code === 'FINISHED') {
+				finished = true;
+				break;
+			}
+
+			if (status.status_code === 'ERROR' || status.status_code === 'EXPIRED') {
+				throw new Error(
+					`Instagram Reel processing failed: ${status.status || status.status_code}. ` +
+					'Ensure the video URL is publicly accessible and the video meets Instagram Reels ' +
+					'requirements (MP4 H.264, max 5 Mbps bitrate, max 90s, 9:16 aspect ratio recommended).',
+				);
+			}
+		}
+
+		if (!finished) {
+			throw new Error('Instagram Reel processing timed out after 5 minutes of polling');
+		}
+
+		// Step 5: Publish IG Reel (retry – may briefly lag behind status poll)
 		igPost = await publishIgContainerWithRetry(
 			ctx, userAccessToken, instagramAccountId, igContainer.id, graphApiVersion,
 		);
 	} catch (error) {
+		// IG failed — clean up the parallel FB video upload so we don't leave orphaned posts
+		try {
+			const fbVideo = await fbVideoPromise;
+			await graphApi.deleteFbVideo(ctx, pageAccessToken, fbVideo.id, graphApiVersion);
+		} catch {
+			// Ignore cleanup errors — the IG error is what matters
+		}
+
 		const msg = (error as Error).message || '';
 		if (msg.includes('carousel') || msg.includes('2207089')) {
 			throw new Error(
