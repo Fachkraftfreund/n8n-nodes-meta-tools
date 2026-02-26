@@ -9,7 +9,11 @@
       "Bash(npx tsc:*)",
       "Bash(npm run build:*)",
       "Bash(node -e:*)",
-      "Bash(node test:*)"
+      "Bash(node test:*)",
+      "Bash(node test-direct-upload2.mjs)",
+      "Bash(node test-reencoded-cdn.mjs)",
+      "Bash(node test-tempserver.mjs)",
+      "Bash(node test-server-local.mjs)"
     ]
   }
 }

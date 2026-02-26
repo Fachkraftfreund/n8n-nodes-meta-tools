@@ -10,9 +10,20 @@ import { NodeOperationError } from 'n8n-workflow';
 import type { MetaPostParams, MetaPostResult } from './types';
 import * as graphApi from './utils/graphApi';
 import { convertImage, convertVideo, downloadMedia } from './utils/ffmpeg';
+import { startTempVideoServer } from './utils/tempServer';
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatIgApiError(resp: graphApi.FullResponse): string {
+	const err = resp.body?.error;
+	if (!err) return `HTTP ${resp.statusCode}: ${JSON.stringify(resp.body)}`;
+	const parts = [`HTTP ${resp.statusCode}`];
+	if (err.code) parts.push(`code ${err.code}`);
+	if (err.error_subcode) parts.push(`subcode ${err.error_subcode}`);
+	const msg = err.error_user_msg || err.message || '';
+	return `Instagram publish failed (${parts.join(', ')}): ${msg}`;
 }
 
 async function publishIgContainerWithRetry(
@@ -32,13 +43,13 @@ async function publishIgContainerWithRetry(
 			return { id: resp.body.id };
 		}
 
-		const errorMsg = resp.body?.error?.message || JSON.stringify(resp.body);
-		const errorCode = resp.body?.error?.code;
+		// Don't retry permanent client errors (4xx) — only retry server errors (5xx)
+		if (resp.statusCode >= 400 && resp.statusCode < 500) {
+			throw new Error(formatIgApiError(resp));
+		}
 
 		if (attempt >= delays.length) {
-			throw new Error(
-				`Instagram publish failed (HTTP ${resp.statusCode}, code ${errorCode}): ${errorMsg}`,
-			);
+			throw new Error(formatIgApiError(resp));
 		}
 
 		await sleep(delays[attempt]);
@@ -80,6 +91,8 @@ function readParams(ctx: IExecuteFunctions, i: number): MetaPostParams {
 		videoMaxWidth: (videoSettings.videoMaxWidth as number) ?? 1080,
 		videoMaxHeight: (videoSettings.videoMaxHeight as number) ?? 1920,
 		videoMaxBitrate: (videoSettings.videoMaxBitrate as string) ?? '4500k',
+		videoServeHost: (videoSettings.videoServeHost as string) ?? '',
+		videoServePort: (videoSettings.videoServePort as number) ?? 5680,
 	};
 }
 
@@ -186,6 +199,35 @@ async function handleImage(
 
 // ── Video Flow ─────────────────────────────────────────────────────
 
+async function pollIgContainer(
+	ctx: IExecuteFunctions,
+	userAccessToken: string,
+	containerId: string,
+	apiVersion: string,
+): Promise<void> {
+	const maxPolls = 30;
+	const pollInterval = 10000;
+
+	for (let attempt = 0; attempt < maxPolls; attempt++) {
+		await sleep(pollInterval);
+		const status = await graphApi.getIgContainerStatus(
+			ctx, userAccessToken, containerId, apiVersion,
+		);
+
+		if (status.status_code === 'FINISHED') return;
+
+		if (status.status_code === 'ERROR' || status.status_code === 'EXPIRED') {
+			throw new Error(
+				`Instagram Reel processing failed: ${status.status || status.status_code}. ` +
+				'Ensure the video URL is publicly accessible and the video meets Instagram Reels ' +
+				'requirements (MP4 H.264, max 5 Mbps bitrate, max 90s, 9:16 aspect ratio recommended).',
+			);
+		}
+	}
+
+	throw new Error('Instagram Reel processing timed out after 5 minutes of polling');
+}
+
 async function handleVideo(
 	ctx: IExecuteFunctions,
 	userAccessToken: string,
@@ -195,7 +237,7 @@ async function handleVideo(
 ): Promise<MetaPostResult> {
 	const { instagramAccountId, facebookPageId, graphApiVersion, mediaUrl } = params;
 
-	// Step 1: Download and convert video for Facebook
+	// Step 1: Download and convert video
 	const videoBuffer = await downloadMedia(ctx, mediaUrl);
 	const convertedBuffer = await convertVideo(videoBuffer, {
 		videoCodec: params.videoCodec,
@@ -211,52 +253,42 @@ async function handleVideo(
 		maxBitrate: params.videoMaxBitrate,
 	});
 
-	// Step 2: Upload converted video to Facebook (published) — runs in parallel with IG flow
+	// Step 2: Determine the video URL for Instagram
+	// If videoServeHost is configured, start a temp server to serve the re-encoded video.
+	// Otherwise, fall back to the original media URL (works if source is already ≤5 Mbps).
+	const useTempServer = !!params.videoServeHost;
+	let igVideoUrl: string;
+	let tempServer: { close: () => Promise<void> } | undefined;
+
+	if (useTempServer) {
+		const server = await startTempVideoServer(
+			convertedBuffer, params.videoServeHost, params.videoServePort,
+		);
+		tempServer = server;
+		igVideoUrl = server.url;
+	} else {
+		igVideoUrl = mediaUrl;
+	}
+
+	// Step 3: Upload converted video to Facebook (published) — runs in parallel with IG flow
 	const fbVideoPromise = graphApi.uploadFbVideoFromBuffer(
 		ctx, pageAccessToken, facebookPageId,
 		convertedBuffer, 'video.mp4', caption, true, graphApiVersion,
 	);
 
-	// Step 3-5: IG flow — wrapped in try-catch to clean up FB video on failure
+	// Step 4-6: IG flow — wrapped in try-catch to clean up FB video on failure
 	let igPost: { id: string };
 	try {
-		// Step 3: Create IG Reel container using the ORIGINAL media URL
-		// (Facebook CDN URLs are not accessible to Instagram's processing servers)
+		// Step 4: Create IG Reel container
 		const igContainer = await graphApi.createIgReelContainer(
 			ctx, userAccessToken, instagramAccountId,
-			mediaUrl, caption, graphApiVersion,
+			igVideoUrl, caption, graphApiVersion,
 		);
 
-		// Step 4: Poll IG container status
-		const maxPolls = 30;
-		const pollInterval = 10000;
-		let finished = false;
+		// Step 5: Poll IG container status
+		await pollIgContainer(ctx, userAccessToken, igContainer.id, graphApiVersion);
 
-		for (let attempt = 0; attempt < maxPolls; attempt++) {
-			await sleep(pollInterval);
-			const status = await graphApi.getIgContainerStatus(
-				ctx, userAccessToken, igContainer.id, graphApiVersion,
-			);
-
-			if (status.status_code === 'FINISHED') {
-				finished = true;
-				break;
-			}
-
-			if (status.status_code === 'ERROR' || status.status_code === 'EXPIRED') {
-				throw new Error(
-					`Instagram Reel processing failed: ${status.status || status.status_code}. ` +
-					'Ensure the video URL is publicly accessible and the video meets Instagram Reels ' +
-					'requirements (MP4 H.264, max 5 Mbps bitrate, max 90s, 9:16 aspect ratio recommended).',
-				);
-			}
-		}
-
-		if (!finished) {
-			throw new Error('Instagram Reel processing timed out after 5 minutes of polling');
-		}
-
-		// Step 5: Publish IG Reel (retry – may briefly lag behind status poll)
+		// Step 6: Publish IG Reel (retry – may briefly lag behind status poll)
 		igPost = await publishIgContainerWithRetry(
 			ctx, userAccessToken, instagramAccountId, igContainer.id, graphApiVersion,
 		);
@@ -270,20 +302,26 @@ async function handleVideo(
 		}
 
 		const msg = (error as Error).message || '';
-		if (msg.includes('carousel') || msg.includes('2207089')) {
+		if (msg.includes('2207089') || msg.toLowerCase().includes('carousel')) {
 			throw new Error(
 				'Instagram rejected the video as a Reel. The video likely exceeds Instagram Reels ' +
 				'requirements (max 5 Mbps bitrate, H.264 High profile, max 90s duration). ' +
-				'Please re-encode the source video to a lower bitrate before posting.',
+				'Please re-encode the source video to a lower bitrate before posting. ' +
+				`(Original error: ${msg})`,
 			);
 		}
 		throw error;
+	} finally {
+		// Always shut down the temp server
+		if (tempServer) {
+			await tempServer.close();
+		}
 	}
 
-	// Step 6: Wait for FB upload to complete
+	// Step 7: Wait for FB upload to complete
 	const fbVideo = await fbVideoPromise;
 
-	// Step 7: Get IG permalink
+	// Step 8: Get IG permalink
 	const igPermalink = await graphApi.getIgPermalink(
 		ctx, userAccessToken, igPost.id, graphApiVersion,
 	);
@@ -504,6 +542,20 @@ export class MetaPost implements INodeType {
 						type: 'string',
 						default: '4500k',
 						description: 'Maximum video bitrate (Instagram Reels limit is 5 Mbps)',
+					},
+					{
+						displayName: 'Public Hostname',
+						name: 'videoServeHost',
+						type: 'string',
+						default: '',
+						description: 'Public hostname or IP of this n8n server. When set, the node starts a temporary HTTP server to serve the re-encoded video to Instagram (required because FB CDN URLs are blocked by Instagram). Leave empty to use the original media URL directly.',
+					},
+					{
+						displayName: 'Serve Port',
+						name: 'videoServePort',
+						type: 'number',
+						default: 5680,
+						description: 'Port for the temporary video server. Must be accessible from the internet.',
 					},
 				],
 			},

@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(node cleanup-fb.mjs)"
+      "Bash(node cleanup-fb.mjs)",
+      "Bash(node test-flow.mjs)",
+      "Bash(node test-delete.mjs)",
+      "Bash(node test-cleanup-flow.mjs)",
+      "Bash(node test-converted-ig.mjs)",
+      "Bash(node test-resumable-ig.mjs)",
+      "Bash(node test-direct-upload.mjs)"
     ]
   }
 }
