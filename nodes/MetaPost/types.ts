@@ -21,6 +21,7 @@ export interface MetaPostParams {
 	audioSampleRate: number;
 	videoMaxWidth: number;
 	videoMaxHeight: number;
+	videoMaxBitrate: string;
 }
 
 export interface MetaPostResult {
@@ -52,6 +53,7 @@ export interface IgPermalinkResponse {
 export interface IgStatusResponse {
 	id: string;
 	status_code: 'EXPIRED' | 'ERROR' | 'FINISHED' | 'IN_PROGRESS' | 'PUBLISHED';
+	status?: string;
 }
 
 export interface FbPhotoResponse {

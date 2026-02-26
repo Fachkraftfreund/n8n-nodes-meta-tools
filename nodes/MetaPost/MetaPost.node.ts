@@ -69,6 +69,7 @@ function readParams(ctx: IExecuteFunctions, i: number): MetaPostParams {
 		audioSampleRate: (videoSettings.audioSampleRate as number) ?? 48000,
 		videoMaxWidth: (videoSettings.videoMaxWidth as number) ?? 1080,
 		videoMaxHeight: (videoSettings.videoMaxHeight as number) ?? 1920,
+		videoMaxBitrate: (videoSettings.videoMaxBitrate as string) ?? '4500k',
 	};
 }
 
@@ -184,7 +185,7 @@ async function handleVideo(
 ): Promise<MetaPostResult> {
 	const { instagramAccountId, facebookPageId, graphApiVersion, mediaUrl } = params;
 
-	// Step 1: Download and convert video
+	// Step 1: Download and convert video for Facebook
 	const videoBuffer = await downloadMedia(ctx, mediaUrl);
 	const convertedBuffer = await convertVideo(videoBuffer, {
 		videoCodec: params.videoCodec,
@@ -197,47 +198,25 @@ async function handleVideo(
 		audioSampleRate: params.audioSampleRate,
 		maxWidth: params.videoMaxWidth,
 		maxHeight: params.videoMaxHeight,
+		maxBitrate: params.videoMaxBitrate,
 	});
 
-	// Step 2: Upload converted video to Facebook (published)
-	const fbVideo = await graphApi.uploadFbVideoFromBuffer(
+	// Step 2: Upload converted video to Facebook (published) — runs in parallel with IG flow
+	const fbVideoPromise = graphApi.uploadFbVideoFromBuffer(
 		ctx, pageAccessToken, facebookPageId,
 		convertedBuffer, 'video.mp4', caption, true, graphApiVersion,
 	);
 
-	// Step 3: Get Facebook video source URL for Instagram
-	let videoSourceUrl: string | undefined;
-	for (let attempt = 0; attempt < 10; attempt++) {
-		await sleep(5000);
-		try {
-			const videoSource = await graphApi.getFbVideoSource(
-				ctx, pageAccessToken, fbVideo.id, graphApiVersion,
-			);
-			if (videoSource.source) {
-				videoSourceUrl = videoSource.source;
-				break;
-			}
-		} catch {
-			// Video may still be processing, retry
-		}
-	}
-
-	if (!videoSourceUrl) {
-		throw new Error(
-			'Could not retrieve video source URL from Facebook after multiple attempts. ' +
-			'The video was posted to Facebook but Instagram posting failed.',
-		);
-	}
-
-	// Step 4: Create IG Reel container
+	// Step 3: Create IG Reel container using the ORIGINAL media URL
+	// (Facebook CDN URLs are not accessible to Instagram's processing servers)
 	const igContainer = await graphApi.createIgReelContainer(
 		ctx, userAccessToken, instagramAccountId,
-		videoSourceUrl, caption, graphApiVersion,
+		mediaUrl, caption, graphApiVersion,
 	);
 
-	// Step 5: Poll IG container status
-	const maxPolls = 20;
-	const pollInterval = 15000;
+	// Step 4: Poll IG container status
+	const maxPolls = 30;
+	const pollInterval = 10000;
 	let finished = false;
 
 	for (let attempt = 0; attempt < maxPolls; attempt++) {
@@ -252,18 +231,38 @@ async function handleVideo(
 		}
 
 		if (status.status_code === 'ERROR' || status.status_code === 'EXPIRED') {
-			throw new Error(`Instagram container processing failed with status: ${status.status_code}`);
+			throw new Error(
+				`Instagram Reel processing failed: ${status.status || status.status_code}. ` +
+				'Ensure the video URL is publicly accessible and the video meets Instagram Reels ' +
+				'requirements (MP4 H.264, max 5 Mbps bitrate, max 90s, 9:16 aspect ratio recommended).',
+			);
 		}
 	}
 
 	if (!finished) {
-		throw new Error('Instagram container processing timed out after polling');
+		throw new Error('Instagram Reel processing timed out after 5 minutes of polling');
 	}
 
-	// Step 6: Publish IG Reel (retry – may briefly lag behind status poll)
-	const igPost = await publishIgContainerWithRetry(
-		ctx, userAccessToken, instagramAccountId, igContainer.id, graphApiVersion,
-	);
+	// Step 5: Publish IG Reel (retry – may briefly lag behind status poll)
+	let igPost: { id: string };
+	try {
+		igPost = await publishIgContainerWithRetry(
+			ctx, userAccessToken, instagramAccountId, igContainer.id, graphApiVersion,
+		);
+	} catch (error) {
+		const msg = (error as Error).message || '';
+		if (msg.includes('carousel') || msg.includes('2207089')) {
+			throw new Error(
+				'Instagram rejected the video as a Reel. The video likely exceeds Instagram Reels ' +
+				'requirements (max 5 Mbps bitrate, H.264 High profile, max 90s duration). ' +
+				'Please re-encode the source video to a lower bitrate before posting.',
+			);
+		}
+		throw error;
+	}
+
+	// Step 6: Wait for FB upload to complete
+	const fbVideo = await fbVideoPromise;
 
 	// Step 7: Get IG permalink
 	const igPermalink = await graphApi.getIgPermalink(
@@ -479,6 +478,13 @@ export class MetaPost implements INodeType {
 						name: 'videoMaxHeight',
 						type: 'number',
 						default: 1920,
+					},
+					{
+						displayName: 'Max Bitrate',
+						name: 'videoMaxBitrate',
+						type: 'string',
+						default: '4500k',
+						description: 'Maximum video bitrate (Instagram Reels limit is 5 Mbps)',
 					},
 				],
 			},

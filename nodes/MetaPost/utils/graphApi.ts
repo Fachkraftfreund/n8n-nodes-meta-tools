@@ -101,7 +101,7 @@ export async function getIgContainerStatus(
 	return ctx.helpers.httpRequest({
 		method: 'GET',
 		url: `${GRAPH_BASE}/${apiVersion}/${containerId}`,
-		qs: { fields: 'status_code', access_token: userAccessToken },
+		qs: { fields: 'status_code,status', access_token: userAccessToken },
 	}) as Promise<IgStatusResponse>;
 }
 

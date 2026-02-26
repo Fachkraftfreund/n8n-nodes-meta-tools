@@ -63,6 +63,7 @@ export interface VideoConvertOptions {
 	audioSampleRate: number;
 	maxWidth: number;
 	maxHeight: number;
+	maxBitrate: string;
 }
 
 /**
@@ -115,7 +116,11 @@ export async function convertVideo(
 	const args = [
 		'-i', tmpInput,
 		'-c:v', options.videoCodec,
+		'-profile:v', 'high',
+		'-level', '4.0',
 		'-crf', options.crf.toString(),
+		'-maxrate', options.maxBitrate,
+		'-bufsize', options.maxBitrate.replace(/(\d+)/, (_, n) => String(parseInt(n) * 2)),
 		'-preset', options.preset,
 		'-vf', `scale=${options.maxWidth}:${options.maxHeight}:force_original_aspect_ratio=decrease,fps=${options.fps}`,
 		'-c:a', options.audioCodec,
