@@ -91,7 +91,8 @@ function readParams(ctx: IExecuteFunctions, i: number): MetaPostParams {
 		videoMaxWidth: (videoSettings.videoMaxWidth as number) ?? 1080,
 		videoMaxHeight: (videoSettings.videoMaxHeight as number) ?? 1920,
 		videoMaxBitrate: (videoSettings.videoMaxBitrate as string) ?? '4500k',
-		videoServePort: (videoSettings.videoServePort as number) ?? 5680,
+		videoServeHost: (ctx.getNodeParameter('videoServeHost', i, '') as string),
+		videoServePort: (ctx.getNodeParameter('videoServePort', i, 5680) as number),
 	};
 }
 
@@ -253,10 +254,14 @@ async function handleVideo(
 	});
 
 	// Step 2: Start a temp server to serve the re-encoded video to Instagram.
-	// Derive the public base URL from the n8n instance URL (hostname) + configured port.
-	const instanceBaseUrl = ctx.getInstanceBaseUrl().replace(/\/+$/, '');
-	const { hostname } = new URL(instanceBaseUrl);
-	const videoServeBaseUrl = `http://${hostname}:${params.videoServePort}`;
+	if (!params.videoServeHost) {
+		throw new Error(
+			'Video Serve Host is required for video posts. Set it to the public hostname or IP ' +
+			'of this server (e.g. myserver.com) in Video Conversion Settings.',
+		);
+	}
+	const host = params.videoServeHost.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+	const videoServeBaseUrl = `http://${host}:${params.videoServePort}`;
 
 	const tempServer = await startTempVideoServer(
 		convertedBuffer, videoServeBaseUrl, params.videoServePort,
@@ -534,14 +539,27 @@ export class MetaPost implements INodeType {
 						default: '4500k',
 						description: 'Maximum video bitrate (Instagram Reels limit is 5 Mbps)',
 					},
-					{
-						displayName: 'Video Serve Port',
-						name: 'videoServePort',
-						type: 'number',
-						default: 5680,
-						description: 'Port for the temporary video server that serves the re-encoded video to Instagram. Must be accessible from the internet. The server URL is derived automatically from the n8n instance base URL.',
-					},
-				],
+					],
+			},
+
+			// ── Video Serve Settings (top-level, video only) ──
+			{
+				displayName: 'Video Serve Host',
+				name: 'videoServeHost',
+				type: 'string',
+				default: '',
+				required: true,
+				placeholder: 'myserver.com',
+				displayOptions: { show: { mediaType: ['video'] } },
+				description: 'Public hostname or IP of this server. Used to build the URL that Instagram fetches the re-encoded video from. The full URL is constructed as http://{host}:{port}/{id}.mp4.',
+			},
+			{
+				displayName: 'Video Serve Port',
+				name: 'videoServePort',
+				type: 'number',
+				default: 5680,
+				displayOptions: { show: { mediaType: ['video'] } },
+				description: 'Port for the temporary video server. Must be reachable from the internet at the host above.',
 			},
 		],
 	};
