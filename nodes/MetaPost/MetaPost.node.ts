@@ -91,8 +91,6 @@ function readParams(ctx: IExecuteFunctions, i: number): MetaPostParams {
 		videoMaxWidth: (videoSettings.videoMaxWidth as number) ?? 1080,
 		videoMaxHeight: (videoSettings.videoMaxHeight as number) ?? 1920,
 		videoMaxBitrate: (videoSettings.videoMaxBitrate as string) ?? '4500k',
-		videoServeHost: (ctx.getNodeParameter('videoServeHost', i, '') as string),
-		videoServePort: (ctx.getNodeParameter('videoServePort', i, 5680) as number),
 	};
 }
 
@@ -253,19 +251,10 @@ async function handleVideo(
 		maxBitrate: params.videoMaxBitrate,
 	});
 
-	// Step 2: Start a temp server to serve the re-encoded video to Instagram.
-	if (!params.videoServeHost) {
-		throw new Error(
-			'Video Serve Host is required for video posts. Set it to the public hostname or IP ' +
-			'of this server (e.g. myserver.com) in Video Conversion Settings.',
-		);
-	}
-	const host = params.videoServeHost.replace(/^https?:\/\//, '').replace(/\/+$/, '');
-	const videoServeBaseUrl = `http://${host}:${params.videoServePort}`;
-
-	const tempServer = await startTempVideoServer(
-		convertedBuffer, videoServeBaseUrl, params.videoServePort,
-	);
+	// Step 2: Serve the re-encoded video through n8n's own HTTP server.
+	// This piggybacks on n8n's existing public URL so no extra port is needed.
+	const instanceBaseUrl = ctx.getInstanceBaseUrl();
+	const tempServer = await startTempVideoServer(convertedBuffer, instanceBaseUrl);
 	const igVideoUrl = tempServer.url;
 
 	// Step 3: Upload converted video to Facebook (published) — runs in parallel with IG flow
@@ -542,25 +531,6 @@ export class MetaPost implements INodeType {
 					],
 			},
 
-			// ── Video Serve Settings (top-level, video only) ──
-			{
-				displayName: 'Video Serve Host',
-				name: 'videoServeHost',
-				type: 'string',
-				default: '',
-				required: true,
-				placeholder: 'myserver.com',
-				displayOptions: { show: { mediaType: ['video'] } },
-				description: 'Public hostname or IP of this server. Used to build the URL that Instagram fetches the re-encoded video from. The full URL is constructed as http://{host}:{port}/{id}.mp4.',
-			},
-			{
-				displayName: 'Video Serve Port',
-				name: 'videoServePort',
-				type: 'number',
-				default: 5680,
-				displayOptions: { show: { mediaType: ['video'] } },
-				description: 'Port for the temporary video server. Must be reachable from the internet at the host above.',
-			},
 		],
 	};
 
