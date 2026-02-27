@@ -23,7 +23,6 @@ export interface MetaPostParams {
 	videoMaxHeight: number;
 	videoMaxBitrate: string;
 	// Temporary video serving (for Instagram re-encoded uploads)
-	videoServeUrl: string;
 	videoServePort: number;
 }
 

@@ -91,7 +91,6 @@ function readParams(ctx: IExecuteFunctions, i: number): MetaPostParams {
 		videoMaxWidth: (videoSettings.videoMaxWidth as number) ?? 1080,
 		videoMaxHeight: (videoSettings.videoMaxHeight as number) ?? 1920,
 		videoMaxBitrate: (videoSettings.videoMaxBitrate as string) ?? '4500k',
-		videoServeUrl: (videoSettings.videoServeUrl as string) ?? '',
 		videoServePort: (videoSettings.videoServePort as number) ?? 5680,
 	};
 }
@@ -253,22 +252,16 @@ async function handleVideo(
 		maxBitrate: params.videoMaxBitrate,
 	});
 
-	// Step 2: Determine the video URL for Instagram
-	// If videoServeHost is configured, start a temp server to serve the re-encoded video.
-	// Otherwise, fall back to the original media URL (works if source is already ≤5 Mbps).
-	const useTempServer = !!params.videoServeUrl;
-	let igVideoUrl: string;
-	let tempServer: { close: () => Promise<void> } | undefined;
+	// Step 2: Start a temp server to serve the re-encoded video to Instagram.
+	// Derive the public base URL from the n8n instance URL (hostname) + configured port.
+	const instanceBaseUrl = ctx.getInstanceBaseUrl().replace(/\/+$/, '');
+	const { hostname } = new URL(instanceBaseUrl);
+	const videoServeBaseUrl = `http://${hostname}:${params.videoServePort}`;
 
-	if (useTempServer) {
-		const server = await startTempVideoServer(
-			convertedBuffer, params.videoServeUrl, params.videoServePort,
-		);
-		tempServer = server;
-		igVideoUrl = server.url;
-	} else {
-		igVideoUrl = mediaUrl;
-	}
+	const tempServer = await startTempVideoServer(
+		convertedBuffer, videoServeBaseUrl, params.videoServePort,
+	);
+	const igVideoUrl = tempServer.url;
 
 	// Step 3: Upload converted video to Facebook (published) — runs in parallel with IG flow
 	const fbVideoPromise = graphApi.uploadFbVideoFromBuffer(
@@ -313,9 +306,7 @@ async function handleVideo(
 		throw error;
 	} finally {
 		// Always shut down the temp server
-		if (tempServer) {
-			await tempServer.close();
-		}
+		await tempServer.close();
 	}
 
 	// Step 7: Wait for FB upload to complete
@@ -544,19 +535,11 @@ export class MetaPost implements INodeType {
 						description: 'Maximum video bitrate (Instagram Reels limit is 5 Mbps)',
 					},
 					{
-						displayName: 'Video Serve URL',
-						name: 'videoServeUrl',
-						type: 'string',
-						default: '',
-						placeholder: 'http://n8n.example.com:5680',
-						description: 'Public base URL for the temporary video server. When set, the node re-encodes the video and serves it via a temp HTTP server so Instagram can fetch it (required because FB CDN URLs are blocked by Instagram). Can be http://host:port for direct access or https://host/path if behind a reverse proxy. Leave empty to use the original media URL directly.',
-					},
-					{
-						displayName: 'Serve Port',
+						displayName: 'Video Serve Port',
 						name: 'videoServePort',
 						type: 'number',
 						default: 5680,
-						description: 'Port for the temporary video server. Must be accessible from the internet.',
+						description: 'Port for the temporary video server that serves the re-encoded video to Instagram. Must be accessible from the internet. The server URL is derived automatically from the n8n instance base URL.',
 					},
 				],
 			},

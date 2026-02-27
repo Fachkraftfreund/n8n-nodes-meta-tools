@@ -13,7 +13,15 @@
       "Bash(node test-direct-upload2.mjs)",
       "Bash(node test-reencoded-cdn.mjs)",
       "Bash(node test-tempserver.mjs)",
-      "Bash(node test-server-local.mjs)"
+      "Bash(node test-server-local.mjs)",
+      "Bash(node test/test-video.mjs)",
+      "Bash(curl -s -H \"Authorization: Bearer 2ohU1XmIdOP4crbKozFXRx4oiUU_2CxcWnc4XFjyLCMZWNkLh\" -H \"Ngrok-Version: 2\" https://api.ngrok.com/reserved_domains)",
+      "Bash(curl -s -H \"Authorization: Bearer 2ohU1XmIdOP4crbKozFXRx4oiUU_2CxcWnc4XFjyLCMZWNkLh\" -H \"Ngrok-Version: 2\" https://api.ngrok.com/tunnels)",
+      "Bash(node test/test-video.mjs --direct)",
+      "Bash(where cloudflared)",
+      "Bash(winget install --id Cloudflare.cloudflared --accept-source-agreements --accept-package-agreements)",
+      "Bash(export PATH=\"$PATH:/c/Program Files \\(x86\\)/cloudflared\")",
+      "Bash(cloudflared --version)"
     ]
   }
 }
