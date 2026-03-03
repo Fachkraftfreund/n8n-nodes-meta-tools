@@ -116,6 +116,7 @@ export async function convertVideo(
 	const args = [
 		'-i', tmpInput,
 		'-c:v', options.videoCodec,
+		'-pix_fmt', 'yuv420p',
 		'-profile:v', 'high',
 		'-level', '4.0',
 		'-crf', options.crf.toString(),
