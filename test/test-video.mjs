@@ -45,7 +45,7 @@ const IG_ACCOUNT = process.env.INSTAGRAM_ACCOUNT_ID;
 const FB_PAGE    = process.env.FACEBOOK_PAGE_ID;
 const VIDEO_URL  = process.env.VIDEO_URL;
 const CAPTION    = process.env.CAPTION || 'Video test – will be deleted';
-const API        = process.env.GRAPH_API_VERSION || 'v23.0';
+const API        = process.env.GRAPH_API_VERSION || 'v25.0';
 const BASE       = 'https://graph.facebook.com';
 const SERVE_PORT = 5680;
 

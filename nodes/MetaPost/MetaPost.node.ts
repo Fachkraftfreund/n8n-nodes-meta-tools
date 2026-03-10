@@ -43,8 +43,11 @@ async function publishIgContainerWithRetry(
 			return { id: resp.body.id };
 		}
 
-		// Don't retry permanent client errors (4xx) — only retry server errors (5xx)
-		if (resp.statusCode >= 400 && resp.statusCode < 500) {
+		// Subcode 2207027 = "media not ready yet" — transient, safe to retry
+		const isMediaNotReady = resp.body?.error?.error_subcode === 2207027;
+
+		// Don't retry permanent client errors (4xx), except "media not ready"
+		if (resp.statusCode >= 400 && resp.statusCode < 500 && !isMediaNotReady) {
 			throw new Error(formatIgApiError(resp));
 		}
 
@@ -76,7 +79,7 @@ function readParams(ctx: IExecuteFunctions, i: number): MetaPostParams {
 		hashSuffix: ctx.getNodeParameter('hashSuffix', i, '') as string,
 		instagramAccountId: ctx.getNodeParameter('instagramAccountId', i) as string,
 		facebookPageId: ctx.getNodeParameter('facebookPageId', i) as string,
-		graphApiVersion: ctx.getNodeParameter('graphApiVersion', i, 'v23.0') as string,
+		graphApiVersion: ctx.getNodeParameter('graphApiVersion', i, 'v25.0') as string,
 		imageMaxWidth: (imageSettings.imageMaxWidth as number) ?? 1080,
 		imageMaxHeight: (imageSettings.imageMaxHeight as number) ?? 1920,
 		imageOutputFormat: (imageSettings.imageOutputFormat as 'jpeg' | 'png') ?? 'jpeg',
@@ -397,7 +400,7 @@ export class MetaPost implements INodeType {
 				displayName: 'Graph API Version',
 				name: 'graphApiVersion',
 				type: 'string',
-				default: 'v23.0',
+				default: 'v25.0',
 				description: 'Facebook Graph API version to use',
 			},
 
