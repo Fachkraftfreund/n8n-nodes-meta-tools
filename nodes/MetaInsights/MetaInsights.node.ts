@@ -402,11 +402,23 @@ export class MetaInsights implements INodeType {
 					if (opts.limit) qs.limit = (opts.limit as number).toString();
 				}
 
-				const response = await this.helpers.httpRequest({
+				const fullResp = (await this.helpers.httpRequest({
 					method: 'GET',
 					url,
 					qs,
-				});
+					ignoreHttpStatusErrors: true,
+					returnFullResponse: true,
+				})) as { body: any; statusCode: number };
+
+				if (fullResp.statusCode >= 400) {
+					const apiError = fullResp.body?.error;
+					const msg = apiError
+						? `Graph API error ${apiError.code || fullResp.statusCode}: ${apiError.message}`
+						: `HTTP ${fullResp.statusCode}: ${JSON.stringify(fullResp.body)}`;
+					throw new Error(msg);
+				}
+
+				const response = fullResp.body;
 
 				// Unwrap data arrays for insights endpoints
 				if (Array.isArray(response.data)) {
