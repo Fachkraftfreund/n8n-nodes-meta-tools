@@ -21,11 +21,28 @@ export async function getPageAccessToken(
 	facebookPageId: string,
 	apiVersion: string,
 ): Promise<PageTokenResponse> {
-	return ctx.helpers.httpRequest({
+	const resp = (await ctx.helpers.httpRequest({
 		method: 'GET',
 		url: `${GRAPH_BASE}/${apiVersion}/${facebookPageId}`,
 		qs: { fields: 'access_token', access_token: userAccessToken },
-	}) as Promise<PageTokenResponse>;
+		ignoreHttpStatusErrors: true,
+		returnFullResponse: true,
+	})) as FullResponse;
+	if (resp.statusCode >= 400) {
+		const apiErr = resp.body?.error;
+		const msg = apiErr
+			? `Graph API error ${apiErr.code || resp.statusCode}: ${apiErr.message}`
+			: `HTTP ${resp.statusCode}: ${JSON.stringify(resp.body)}`;
+		throw new Error(`Failed to get page access token for ${facebookPageId}: ${msg}`);
+	}
+	if (!resp.body?.access_token) {
+		throw new Error(
+			`No page access token returned for ${facebookPageId}. ` +
+			'Ensure the token has pages_show_list and pages_read_engagement permissions, ' +
+			'and that the user manages this page.',
+		);
+	}
+	return resp.body as PageTokenResponse;
 }
 
 // ── Instagram: Container Creation ──────────────────────────────────
