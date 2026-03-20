@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-meta-tools",
-	"version": "0.1.15",
+	"version": "0.1.16",
 	"description": "n8n community node to post images and videos to Facebook Pages and Instagram",
 	"license": "MIT",
 	"keywords": [
@@ -13,7 +13,7 @@
 	],
 	"main": "dist/nodes/MetaPost/MetaPost.node.js",
 	"scripts": {
-		"build": "tsc && cp nodes/MetaPost/metaPost.svg dist/nodes/MetaPost/",
+		"build": "tsc && cp nodes/MetaPost/metaPost.svg dist/nodes/MetaPost/ && cp nodes/MetaInsights/metaInsights.svg dist/nodes/MetaInsights/",
 		"dev": "tsc --watch",
 		"lint": "tsc --noEmit"
 	},
@@ -23,7 +23,8 @@
 	"n8n": {
 		"n8nNodesApiVersion": 1,
 		"nodes": [
-			"dist/nodes/MetaPost/MetaPost.node.js"
+			"dist/nodes/MetaPost/MetaPost.node.js",
+			"dist/nodes/MetaInsights/MetaInsights.node.js"
 		],
 		"credentials": []
 	},

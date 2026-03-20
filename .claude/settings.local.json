@@ -21,7 +21,8 @@
       "Bash(where cloudflared)",
       "Bash(winget install --id Cloudflare.cloudflared --accept-source-agreements --accept-package-agreements)",
       "Bash(export PATH=\"$PATH:/c/Program Files \\(x86\\)/cloudflared\")",
-      "Bash(cloudflared --version)"
+      "Bash(cloudflared --version)",
+      "Bash(node test/test-insights.mjs)"
     ]
   }
 }
