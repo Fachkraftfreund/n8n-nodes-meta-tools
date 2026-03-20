@@ -10,17 +10,23 @@ const GRAPH_BASE = 'https://graph.facebook.com';
 
 const DEFAULT_FIELDS: Record<string, string> = {
 	fbAdsAccount:
-		'spend,impressions,reach,clicks,video_play_actions,actions,cpm,cpc,ctr,frequency',
+		'spend,impressions,reach,clicks,video_play_actions,actions,cpm,cpc,ctr,frequency,conversions,cost_per_action_type,cost_per_conversion,purchase_roas,website_ctr,unique_clicks,unique_ctr,cost_per_unique_click,outbound_clicks,outbound_clicks_ctr,video_30_sec_watched_actions,video_avg_time_watched_actions',
 	fbAdsCampaign:
-		'campaign_name,spend,impressions,reach,clicks,video_play_actions,actions,cpm,cpc,ctr,frequency',
-	igProfile: 'followers_count,username',
+		'campaign_name,spend,impressions,reach,clicks,video_play_actions,actions,cpm,cpc,ctr,frequency,conversions,cost_per_action_type,cost_per_conversion,purchase_roas,website_ctr,unique_clicks,unique_ctr,cost_per_unique_click,outbound_clicks,outbound_clicks_ctr,video_30_sec_watched_actions,video_avg_time_watched_actions',
+	igProfile:
+		'followers_count,username,name,biography,website,media_count,profile_picture_url,ig_id',
 };
 
 const DEFAULT_METRICS: Record<string, string> = {
 	fbPageInsights:
-		'page_impressions,page_impressions_unique,page_post_engagements,page_follows',
-	igInsights: 'impressions,reach',
+		'page_impressions_unique,page_post_engagements,page_follows,page_daily_follows,page_daily_follows_unique,page_daily_unfollows_unique,page_views_total,page_video_views,page_video_views_unique,page_actions_post_reactions_total,page_total_actions,page_posts_impressions,page_posts_impressions_unique',
+	igInsights:
+		'reach,follower_count,website_clicks,profile_views,accounts_engaged,total_interactions,likes,comments,shares,saves,replies,follows_and_unfollows,profile_links_taps,views',
 };
+
+// IG metrics that use period=day without metric_type (time-series)
+const IG_TIME_SERIES_METRICS = new Set(['reach', 'follower_count']);
+// All other IG metrics require metric_type=total_value
 
 export class MetaInsights implements INodeType {
 	description: INodeTypeDescription = {
@@ -130,7 +136,7 @@ export class MetaInsights implements INodeType {
 				},
 				default: '',
 				description:
-					'Comma-separated metrics. Leave empty for defaults. Common metrics: page_impressions, page_impressions_unique, page_impressions_paid, page_impressions_viral, page_post_engagements, page_follows, page_daily_follows, page_daily_unfollows_unique, page_fans, page_fan_adds, page_fan_removes, page_views_total, page_video_views, page_video_views_unique, page_actions_post_reactions_total, page_total_actions',
+					'Comma-separated metrics. Leave empty for defaults. Valid metrics: page_impressions_unique, page_post_engagements, page_follows, page_daily_follows, page_daily_follows_unique, page_daily_unfollows_unique, page_views_total, page_video_views, page_video_views_unique, page_actions_post_reactions_total, page_total_actions, page_posts_impressions, page_posts_impressions_unique',
 			},
 			{
 				displayName: 'Metric',
@@ -141,7 +147,7 @@ export class MetaInsights implements INodeType {
 				},
 				default: '',
 				description:
-					'Comma-separated metrics. Leave empty for defaults. Common metrics: impressions, reach, profile_views, accounts_engaged, total_interactions, likes, comments, shares, saves, replies, follows_and_unfollows',
+					'Comma-separated metrics. Leave empty for defaults. Valid metrics: reach, follower_count, website_clicks, profile_views, online_followers, accounts_engaged, total_interactions, likes, comments, shares, saves, replies, follows_and_unfollows, profile_links_taps, views',
 			},
 
 			// ── Date / Period ─────────────────────────────────────
@@ -361,18 +367,84 @@ export class MetaInsights implements INodeType {
 						break;
 					}
 					case 'igInsights': {
+						// IG Insights needs two calls: time-series vs total_value metrics
 						const igId = this.getNodeParameter(
 							'instagramAccountId',
 							i,
 						) as string;
-						const metric =
+						const allMetrics = (
 							(this.getNodeParameter('igMetric', i) as string) ||
-							DEFAULT_METRICS.igInsights;
-						const period = this.getNodeParameter('period', i) as string;
-						url = `${GRAPH_BASE}/${apiVersion}/${igId}/insights`;
-						qs.metric = metric;
-						qs.period = period;
-						break;
+							DEFAULT_METRICS.igInsights
+						).split(',').map((m) => m.trim());
+
+						const tsMetrics = allMetrics.filter((m) =>
+							IG_TIME_SERIES_METRICS.has(m),
+						);
+						const tvMetrics = allMetrics.filter(
+							(m) => !IG_TIME_SERIES_METRICS.has(m),
+						);
+
+						const opts = this.getNodeParameter(
+							'additionalOptions',
+							i,
+							{},
+						) as IDataObject;
+						const extraQs: Record<string, string> = {};
+						if (opts.since) extraQs.since = opts.since as string;
+						if (opts.until) extraQs.until = opts.until as string;
+
+						const makeIgCall = async (
+							metrics: string[],
+							metricType?: string,
+						) => {
+							const callQs: Record<string, string> = {
+								access_token: accessToken,
+								metric: metrics.join(','),
+								period: 'day',
+								...extraQs,
+							};
+							if (metricType)
+								callQs.metric_type = metricType;
+							const resp = (await this.helpers.httpRequest({
+								method: 'GET',
+								url: `${GRAPH_BASE}/${apiVersion}/${igId}/insights`,
+								qs: callQs,
+								ignoreHttpStatusErrors: true,
+								returnFullResponse: true,
+							})) as { body: any; statusCode: number };
+							if (resp.statusCode >= 400) {
+								const apiErr = resp.body?.error;
+								const msg = apiErr
+									? `Graph API error ${apiErr.code || resp.statusCode}: ${apiErr.message}`
+									: `HTTP ${resp.statusCode}: ${JSON.stringify(resp.body)}`;
+								throw new Error(msg);
+							}
+							return resp.body;
+						};
+
+						if (tsMetrics.length > 0) {
+							const resp = await makeIgCall(tsMetrics);
+							if (Array.isArray(resp.data)) {
+								for (const entry of resp.data) {
+									returnData.push({ json: entry });
+								}
+							}
+						}
+						if (tvMetrics.length > 0) {
+							const resp = await makeIgCall(
+								tvMetrics,
+								'total_value',
+							);
+							if (Array.isArray(resp.data)) {
+								for (const entry of resp.data) {
+									returnData.push({ json: entry });
+								}
+							}
+						}
+						if (tsMetrics.length === 0 && tvMetrics.length === 0) {
+							returnData.push({ json: { data: [] } });
+						}
+						continue; // skip shared request logic below
 					}
 					case 'igProfile': {
 						const igId = this.getNodeParameter(
