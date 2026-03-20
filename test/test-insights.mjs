@@ -102,7 +102,7 @@ async function main() {
 	// 4. Facebook Page Insights
 	if (PAGE_ID) {
 		await api('FB Page Insights', `/${PAGE_ID}/insights`, {
-			metric: 'page_impressions_total,page_impressions_unique,page_post_engagements,page_follows',
+			metric: 'page_impressions,page_impressions_unique,page_post_engagements,page_follows',
 			period: 'week',
 		});
 	} else {

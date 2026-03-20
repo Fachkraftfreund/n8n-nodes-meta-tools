@@ -18,7 +18,7 @@ const DEFAULT_FIELDS: Record<string, string> = {
 
 const DEFAULT_METRICS: Record<string, string> = {
 	fbPageInsights:
-		'page_impressions_total,page_impressions_unique,page_post_engagements,page_follows',
+		'page_impressions,page_impressions_unique,page_post_engagements,page_follows',
 	igInsights: 'impressions,reach',
 };
 
@@ -126,11 +126,22 @@ export class MetaInsights implements INodeType {
 				name: 'metric',
 				type: 'string',
 				displayOptions: {
-					show: { operation: ['fbPageInsights', 'igInsights'] },
+					show: { operation: ['fbPageInsights'] },
 				},
 				default: '',
 				description:
-					'Comma-separated metrics to return. Leave empty for defaults.',
+					'Comma-separated metrics. Leave empty for defaults. Common metrics: page_impressions, page_impressions_unique, page_impressions_paid, page_impressions_viral, page_post_engagements, page_follows, page_daily_follows, page_daily_unfollows_unique, page_fans, page_fan_adds, page_fan_removes, page_views_total, page_video_views, page_video_views_unique, page_actions_post_reactions_total, page_total_actions',
+			},
+			{
+				displayName: 'Metric',
+				name: 'igMetric',
+				type: 'string',
+				displayOptions: {
+					show: { operation: ['igInsights'] },
+				},
+				default: '',
+				description:
+					'Comma-separated metrics. Leave empty for defaults. Common metrics: impressions, reach, profile_views, accounts_engaged, total_interactions, likes, comments, shares, saves, replies, follows_and_unfollows',
 			},
 
 			// ── Date / Period ─────────────────────────────────────
@@ -332,16 +343,20 @@ export class MetaInsights implements INodeType {
 						qs.period = period;
 
 						// Page insights require a Page Access Token
-						const pageTokenResp = await this.helpers.httpRequest({
-							method: 'GET',
-							url: `${GRAPH_BASE}/${apiVersion}/${pageId}`,
-							qs: {
-								fields: 'access_token',
-								access_token: accessToken,
-							},
-						}) as { access_token?: string };
-						if (pageTokenResp.access_token) {
-							qs.access_token = pageTokenResp.access_token;
+						try {
+							const pageTokenResp = await this.helpers.httpRequest({
+								method: 'GET',
+								url: `${GRAPH_BASE}/${apiVersion}/${pageId}`,
+								qs: {
+									fields: 'access_token',
+									access_token: accessToken,
+								},
+							}) as { access_token?: string };
+							if (pageTokenResp.access_token) {
+								qs.access_token = pageTokenResp.access_token;
+							}
+						} catch {
+							// Falls back to user access token if page token exchange fails
 						}
 						break;
 					}
@@ -351,7 +366,7 @@ export class MetaInsights implements INodeType {
 							i,
 						) as string;
 						const metric =
-							(this.getNodeParameter('metric', i) as string) ||
+							(this.getNodeParameter('igMetric', i) as string) ||
 							DEFAULT_METRICS.igInsights;
 						const period = this.getNodeParameter('period', i) as string;
 						url = `${GRAPH_BASE}/${apiVersion}/${igId}/insights`;
