@@ -106,6 +106,52 @@ export async function createIgReelContainer(
 	}) as Promise<IgContainerResponse>;
 }
 
+// ── Instagram: Carousel ─────────────────────────────────────────────
+
+export async function createIgCarouselItemContainer(
+	ctx: IExecuteFunctions,
+	userAccessToken: string,
+	igAccountId: string,
+	mediaUrl: string,
+	mediaType: 'image' | 'video',
+	apiVersion: string,
+): Promise<IgContainerResponse> {
+	const qs: Record<string, string> = {
+		is_carousel_item: 'true',
+		access_token: userAccessToken,
+	};
+	if (mediaType === 'image') {
+		qs.image_url = mediaUrl;
+	} else {
+		qs.video_url = mediaUrl;
+	}
+	return ctx.helpers.httpRequest({
+		method: 'POST',
+		url: `${GRAPH_BASE}/${apiVersion}/${igAccountId}/media`,
+		qs,
+	}) as Promise<IgContainerResponse>;
+}
+
+export async function createIgCarouselContainer(
+	ctx: IExecuteFunctions,
+	userAccessToken: string,
+	igAccountId: string,
+	childIds: string[],
+	caption: string,
+	apiVersion: string,
+): Promise<IgContainerResponse> {
+	return ctx.helpers.httpRequest({
+		method: 'POST',
+		url: `${GRAPH_BASE}/${apiVersion}/${igAccountId}/media`,
+		qs: {
+			media_type: 'CAROUSEL',
+			children: childIds.join(','),
+			caption,
+			access_token: userAccessToken,
+		},
+	}) as Promise<IgContainerResponse>;
+}
+
 // ── Instagram: Status Polling ──────────────────────────────────────
 
 export async function getIgContainerStatus(

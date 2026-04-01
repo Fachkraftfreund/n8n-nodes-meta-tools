@@ -1,6 +1,12 @@
-export interface MetaPostParams {
+export interface CarouselItem {
 	mediaType: 'image' | 'video';
 	mediaUrl: string;
+}
+
+export interface MetaPostParams {
+	mediaType: 'image' | 'video' | 'carousel';
+	mediaUrl: string;
+	carouselItems: CarouselItem[];
 	caption: string;
 	hashSuffix: string;
 	instagramAccountId: string;

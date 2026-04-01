@@ -7,7 +7,7 @@ import type {
 } from 'n8n-workflow';
 import { NodeOperationError } from 'n8n-workflow';
 
-import type { MetaPostParams, MetaPostResult } from './types';
+import type { MetaPostParams, MetaPostResult, CarouselItem } from './types';
 import * as graphApi from './utils/graphApi';
 import { convertImage, convertVideo, downloadMedia } from './utils/ffmpeg';
 import { startTempVideoServer } from './utils/tempServer';
@@ -72,9 +72,20 @@ function readParams(ctx: IExecuteFunctions, i: number): MetaPostParams {
 	const imageSettings = ctx.getNodeParameter('imageSettings', i, {}) as IDataObject;
 	const videoSettings = ctx.getNodeParameter('videoSettings', i, {}) as IDataObject;
 
+	let carouselItems: CarouselItem[] = [];
+	if (mediaType === 'carousel') {
+		const raw = ctx.getNodeParameter('carouselItems', i, {}) as IDataObject;
+		const items = (raw.items as IDataObject[]) || [];
+		carouselItems = items.map((item) => ({
+			mediaType: item.mediaType as 'image' | 'video',
+			mediaUrl: item.mediaUrl as string,
+		}));
+	}
+
 	return {
-		mediaType: mediaType as 'image' | 'video',
-		mediaUrl: ctx.getNodeParameter('mediaUrl', i) as string,
+		mediaType: mediaType as 'image' | 'video' | 'carousel',
+		mediaUrl: mediaType !== 'carousel' ? (ctx.getNodeParameter('mediaUrl', i) as string) : '',
+		carouselItems,
 		caption: ctx.getNodeParameter('caption', i, '') as string,
 		hashSuffix: ctx.getNodeParameter('hashSuffix', i, '') as string,
 		instagramAccountId: ctx.getNodeParameter('instagramAccountId', i) as string,
@@ -322,6 +333,104 @@ async function handleVideo(
 	};
 }
 
+// ── Carousel Flow ──────────────────────────────────────────────────
+
+async function handleCarousel(
+	ctx: IExecuteFunctions,
+	userAccessToken: string,
+	pageAccessToken: string,
+	params: MetaPostParams,
+	caption: string,
+): Promise<MetaPostResult> {
+	const { instagramAccountId, facebookPageId, graphApiVersion, carouselItems } = params;
+
+	if (carouselItems.length < 2 || carouselItems.length > 10) {
+		throw new Error(`Carousel requires 2-10 items, got ${carouselItems.length}`);
+	}
+
+	// Step 1: Create child containers for each item
+	const childIds: string[] = [];
+	const videoServers: Array<{ close: () => Promise<void> }> = [];
+
+	try {
+		for (const item of carouselItems) {
+			let mediaUrl = item.mediaUrl;
+
+			if (item.mediaType === 'video') {
+				// Download, convert, and serve video just like single video flow
+				const videoBuffer = await downloadMedia(ctx, item.mediaUrl);
+				const convertedBuffer = await convertVideo(videoBuffer, {
+					videoCodec: params.videoCodec,
+					crf: params.videoCrf,
+					preset: params.videoPreset,
+					fps: params.videoFps,
+					audioCodec: params.audioCodec,
+					audioBitrate: params.audioBitrate,
+					audioChannels: params.audioChannels,
+					audioSampleRate: params.audioSampleRate,
+					maxWidth: params.videoMaxWidth,
+					maxHeight: params.videoMaxHeight,
+					maxBitrate: params.videoMaxBitrate,
+				});
+				const instanceBaseUrl = ctx.getInstanceBaseUrl();
+				const tempServer = await startTempVideoServer(convertedBuffer, instanceBaseUrl);
+				videoServers.push(tempServer);
+				mediaUrl = tempServer.url;
+			}
+
+			const child = await graphApi.createIgCarouselItemContainer(
+				ctx, userAccessToken, instagramAccountId,
+				mediaUrl, item.mediaType, graphApiVersion,
+			);
+			childIds.push(child.id);
+
+			// Poll video items until ready
+			if (item.mediaType === 'video') {
+				await pollIgContainer(ctx, userAccessToken, child.id, graphApiVersion);
+			}
+		}
+
+		// Step 2: Create parent carousel container
+		const carouselContainer = await graphApi.createIgCarouselContainer(
+			ctx, userAccessToken, instagramAccountId,
+			childIds, caption, graphApiVersion,
+		);
+
+		// Step 3: Publish carousel
+		const igPost = await publishIgContainerWithRetry(
+			ctx, userAccessToken, instagramAccountId, carouselContainer.id, graphApiVersion,
+		);
+
+		// Step 4: Upload first image to Facebook as the feed post photo
+		const firstImage = carouselItems.find((item) => item.mediaType === 'image');
+		let fbPostId = '';
+		if (firstImage) {
+			const fbPhoto = await graphApi.uploadFbPhotoFromUrl(
+				ctx, pageAccessToken, facebookPageId, firstImage.mediaUrl, false, graphApiVersion,
+			);
+			const fbFeedPost = await graphApi.createFbFeedPost(
+				ctx, pageAccessToken, facebookPageId, caption, fbPhoto.id, graphApiVersion,
+			);
+			fbPostId = fbFeedPost.id;
+		}
+
+		// Step 5: Get IG permalink
+		const igPermalink = await graphApi.getIgPermalink(
+			ctx, userAccessToken, igPost.id, graphApiVersion,
+		);
+
+		return {
+			instagram_post_id: igPost.id,
+			instagram_permalink: igPermalink.permalink,
+			facebook_post_id: fbPostId,
+		};
+	} finally {
+		for (const server of videoServers) {
+			await server.close();
+		}
+	}
+}
+
 // ── Node Definition ────────────────────────────────────────────────
 
 export class MetaPost implements INodeType {
@@ -331,7 +440,7 @@ export class MetaPost implements INodeType {
 		icon: 'file:metaPost.svg',
 		group: ['output'],
 		version: 1,
-		subtitle: '={{$parameter["mediaType"] === "image" ? "Post Image" : "Post Video"}}',
+		subtitle: '={{$parameter["mediaType"] === "image" ? "Post Image" : $parameter["mediaType"] === "video" ? "Post Video" : "Post Carousel"}}',
 		description: 'Post images and videos to Facebook Pages and Instagram',
 		defaults: {
 			name: 'Meta Post',
@@ -353,6 +462,7 @@ export class MetaPost implements INodeType {
 				options: [
 					{ name: 'Image', value: 'image' },
 					{ name: 'Video', value: 'video' },
+					{ name: 'Carousel', value: 'carousel' },
 				],
 				default: 'image',
 				description: 'Type of media to post',
@@ -363,7 +473,44 @@ export class MetaPost implements INodeType {
 				type: 'string',
 				default: '',
 				required: true,
+				displayOptions: { show: { mediaType: ['image', 'video'] } },
 				description: 'Publicly accessible URL of the image or video',
+			},
+			{
+				displayName: 'Carousel Items',
+				name: 'carouselItems',
+				type: 'fixedCollection',
+				typeOptions: { multipleValues: true },
+				default: {},
+				required: true,
+				displayOptions: { show: { mediaType: ['carousel'] } },
+				description: 'Media items for the carousel (2-10 items, can mix images and videos)',
+				options: [
+					{
+						name: 'items',
+						displayName: 'Item',
+						values: [
+							{
+								displayName: 'Media Type',
+								name: 'mediaType',
+								type: 'options',
+								options: [
+									{ name: 'Image', value: 'image' },
+									{ name: 'Video', value: 'video' },
+								],
+								default: 'image',
+							},
+							{
+								displayName: 'Media URL',
+								name: 'mediaUrl',
+								type: 'string',
+								default: '',
+								required: true,
+								description: 'Publicly accessible URL of the image or video',
+							},
+						],
+					},
+				],
 			},
 			{
 				displayName: 'Caption',
@@ -449,7 +596,7 @@ export class MetaPost implements INodeType {
 				type: 'collection',
 				placeholder: 'Add Setting',
 				default: {},
-				displayOptions: { show: { mediaType: ['video'] } },
+				displayOptions: { show: { mediaType: ['video', 'carousel'] } },
 				description: 'Settings for video conversion (always applied for videos)',
 				options: [
 					{
@@ -558,8 +705,10 @@ export class MetaPost implements INodeType {
 				let result: MetaPostResult;
 				if (params.mediaType === 'image') {
 					result = await handleImage(this, userAccessToken, pageAccessToken, params, caption);
-				} else {
+				} else if (params.mediaType === 'video') {
 					result = await handleVideo(this, userAccessToken, pageAccessToken, params, caption);
+				} else {
+					result = await handleCarousel(this, userAccessToken, pageAccessToken, params, caption);
 				}
 
 				returnData.push({
