@@ -67,24 +67,39 @@ function prepareCaption(caption: string, hashSuffix: string): string {
 	return result.replace(/\n{3,}/g, '\n\n');
 }
 
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.avi', '.webm', '.mkv', '.m4v']);
+
+function detectItemMediaType(url: string): 'image' | 'video' {
+	try {
+		const pathname = new URL(url).pathname.toLowerCase();
+		const ext = pathname.slice(pathname.lastIndexOf('.'));
+		return VIDEO_EXTENSIONS.has(ext) ? 'video' : 'image';
+	} catch {
+		return 'image';
+	}
+}
+
 function readParams(ctx: IExecuteFunctions, i: number): MetaPostParams {
 	const mediaType = ctx.getNodeParameter('mediaType', i) as string;
+	const mediaUrl = ctx.getNodeParameter('mediaUrl', i) as string;
 	const imageSettings = ctx.getNodeParameter('imageSettings', i, {}) as IDataObject;
 	const videoSettings = ctx.getNodeParameter('videoSettings', i, {}) as IDataObject;
 
 	let carouselItems: CarouselItem[] = [];
 	if (mediaType === 'carousel') {
-		const raw = ctx.getNodeParameter('carouselItems', i, {}) as IDataObject;
-		const items = (raw.items as IDataObject[]) || [];
-		carouselItems = items.map((item) => ({
-			mediaType: item.mediaType as 'image' | 'video',
-			mediaUrl: item.mediaUrl as string,
-		}));
+		carouselItems = mediaUrl
+			.split(',')
+			.map((u) => u.trim())
+			.filter((u) => u.length > 0)
+			.map((u) => ({
+				mediaType: detectItemMediaType(u),
+				mediaUrl: u,
+			}));
 	}
 
 	return {
 		mediaType: mediaType as 'image' | 'video' | 'carousel',
-		mediaUrl: mediaType !== 'carousel' ? (ctx.getNodeParameter('mediaUrl', i) as string) : '',
+		mediaUrl,
 		carouselItems,
 		caption: ctx.getNodeParameter('caption', i, '') as string,
 		hashSuffix: ctx.getNodeParameter('hashSuffix', i, '') as string,
@@ -473,44 +488,7 @@ export class MetaPost implements INodeType {
 				type: 'string',
 				default: '',
 				required: true,
-				displayOptions: { show: { mediaType: ['image', 'video'] } },
-				description: 'Publicly accessible URL of the image or video',
-			},
-			{
-				displayName: 'Carousel Items',
-				name: 'carouselItems',
-				type: 'fixedCollection',
-				typeOptions: { multipleValues: true },
-				default: {},
-				required: true,
-				displayOptions: { show: { mediaType: ['carousel'] } },
-				description: 'Media items for the carousel (2-10 items, can mix images and videos)',
-				options: [
-					{
-						name: 'items',
-						displayName: 'Item',
-						values: [
-							{
-								displayName: 'Media Type',
-								name: 'mediaType',
-								type: 'options',
-								options: [
-									{ name: 'Image', value: 'image' },
-									{ name: 'Video', value: 'video' },
-								],
-								default: 'image',
-							},
-							{
-								displayName: 'Media URL',
-								name: 'mediaUrl',
-								type: 'string',
-								default: '',
-								required: true,
-								description: 'Publicly accessible URL of the image or video',
-							},
-						],
-					},
-				],
+				description: 'Publicly accessible URL. For carousel: comma-separated URLs (2-10). Video URLs are auto-detected by extension (.mp4, .mov, .avi, .webm).',
 			},
 			{
 				displayName: 'Caption',
