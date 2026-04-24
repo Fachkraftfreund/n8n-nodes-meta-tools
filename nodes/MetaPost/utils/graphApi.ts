@@ -60,11 +60,14 @@ export async function tryCreateIgImageContainer(
 	imageUrl: string,
 	caption: string,
 	apiVersion: string,
+	locationId?: string,
 ): Promise<FullResponse> {
+	const qs: Record<string, string> = { image_url: imageUrl, caption, access_token: userAccessToken };
+	if (locationId) qs.location_id = locationId;
 	return ctx.helpers.httpRequest({
 		method: 'POST',
 		url: `${GRAPH_BASE}/${apiVersion}/${igAccountId}/media`,
-		qs: { image_url: imageUrl, caption, access_token: userAccessToken },
+		qs,
 		ignoreHttpStatusErrors: true,
 		returnFullResponse: true,
 	}) as Promise<FullResponse>;
@@ -77,11 +80,14 @@ export async function createIgImageContainer(
 	imageUrl: string,
 	caption: string,
 	apiVersion: string,
+	locationId?: string,
 ): Promise<IgContainerResponse> {
+	const qs: Record<string, string> = { image_url: imageUrl, caption, access_token: userAccessToken };
+	if (locationId) qs.location_id = locationId;
 	return ctx.helpers.httpRequest({
 		method: 'POST',
 		url: `${GRAPH_BASE}/${apiVersion}/${igAccountId}/media`,
-		qs: { image_url: imageUrl, caption, access_token: userAccessToken },
+		qs,
 	}) as Promise<IgContainerResponse>;
 }
 
@@ -92,17 +98,26 @@ export async function createIgReelContainer(
 	videoUrl: string,
 	caption: string,
 	apiVersion: string,
+	coverUrl?: string,
+	locationId?: string,
 ): Promise<IgContainerResponse> {
+	const qs: Record<string, string> = {
+		video_url: videoUrl,
+		media_type: 'REELS',
+		share_to_feed: 'true',
+		caption,
+		access_token: userAccessToken,
+	};
+	if (coverUrl) {
+		qs.cover_url = coverUrl;
+	}
+	if (locationId) {
+		qs.location_id = locationId;
+	}
 	return ctx.helpers.httpRequest({
 		method: 'POST',
 		url: `${GRAPH_BASE}/${apiVersion}/${igAccountId}/media`,
-		qs: {
-			video_url: videoUrl,
-			media_type: 'REELS',
-			share_to_feed: 'true',
-			caption,
-			access_token: userAccessToken,
-		},
+		qs,
 	}) as Promise<IgContainerResponse>;
 }
 
@@ -139,16 +154,19 @@ export async function createIgCarouselContainer(
 	childIds: string[],
 	caption: string,
 	apiVersion: string,
+	locationId?: string,
 ): Promise<IgContainerResponse> {
+	const qs: Record<string, string> = {
+		media_type: 'CAROUSEL',
+		children: childIds.join(','),
+		caption,
+		access_token: userAccessToken,
+	};
+	if (locationId) qs.location_id = locationId;
 	return ctx.helpers.httpRequest({
 		method: 'POST',
 		url: `${GRAPH_BASE}/${apiVersion}/${igAccountId}/media`,
-		qs: {
-			media_type: 'CAROUSEL',
-			children: childIds.join(','),
-			caption,
-			access_token: userAccessToken,
-		},
+		qs,
 	}) as Promise<IgContainerResponse>;
 }
 
@@ -268,11 +286,13 @@ export async function uploadFbVideoFromBuffer(
 	description: string,
 	published: boolean,
 	apiVersion: string,
+	placeId?: string,
 ): Promise<FbVideoResponse> {
 	const formData = new FormData();
 	formData.append('source', new Blob([buffer], { type: 'video/mp4' }), filename);
 	formData.append('description', description);
 	formData.append('published', published.toString());
+	if (placeId) formData.append('place', placeId);
 	formData.append('access_token', pageAccessToken);
 
 	return ctx.helpers.httpRequest({
@@ -319,10 +339,12 @@ export async function createFbFeedPost(
 	message: string,
 	mediaFbId: string,
 	apiVersion: string,
+	placeId?: string,
 ): Promise<FbFeedPostResponse> {
 	const formData = new FormData();
 	formData.append('message', message);
 	formData.append('attached_media[0]', JSON.stringify({ media_fbid: mediaFbId }));
+	if (placeId) formData.append('place', placeId);
 	formData.append('access_token', pageAccessToken);
 
 	return ctx.helpers.httpRequest({
@@ -330,4 +352,48 @@ export async function createFbFeedPost(
 		url: `${GRAPH_BASE}/${apiVersion}/${pageId}/feed`,
 		body: formData,
 	}) as Promise<FbFeedPostResponse>;
+}
+
+// ── Location Search ─────────────────────────────────────────────────
+
+export async function searchPlaceId(
+	ctx: IExecuteFunctions,
+	userAccessToken: string,
+	query: string,
+	apiVersion: string,
+): Promise<string> {
+	const trimmed = query.trim();
+	if (!trimmed) {
+		throw new Error('Location query is empty');
+	}
+
+	// If the input looks like a Facebook Page ID (long numeric), use it directly.
+	// Short numeric strings like German PLZ (5 digits) fall through to search.
+	if (/^\d{10,}$/.test(trimmed)) return trimmed;
+
+	const resp = (await ctx.helpers.httpRequest({
+		method: 'GET',
+		url: `${GRAPH_BASE}/${apiVersion}/pages/search`,
+		qs: { q: trimmed, fields: 'id,name,location', access_token: userAccessToken },
+		ignoreHttpStatusErrors: true,
+		returnFullResponse: true,
+	})) as FullResponse;
+
+	if (resp.statusCode >= 400) {
+		const apiErr = resp.body?.error;
+		const msg = apiErr
+			? `Graph API error ${apiErr.code || resp.statusCode}: ${apiErr.message}`
+			: `HTTP ${resp.statusCode}: ${JSON.stringify(resp.body)}`;
+		throw new Error(`Failed to search for location "${trimmed}": ${msg}`);
+	}
+
+	const results: Array<{ id: string; name?: string; location?: unknown }> = resp.body?.data ?? [];
+	const withLocation = results.find((r) => r.location);
+	if (!withLocation) {
+		throw new Error(
+			`No location found for "${trimmed}". Try a more specific query (e.g. a city name, landmark, ` +
+			'or a combination like "10115 Berlin"). You can also supply a Facebook Place Page ID directly.',
+		);
+	}
+	return withLocation.id;
 }

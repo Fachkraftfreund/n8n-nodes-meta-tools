@@ -69,17 +69,43 @@ function prepareCaption(caption: string, hashSuffix: string): string {
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.avi', '.webm', '.mkv', '.m4v']);
 
-function detectItemMediaType(url: string): 'image' | 'video' {
+function detectItemMediaTypeByExt(url: string): 'image' | 'video' | null {
 	try {
 		const pathname = new URL(url).pathname.toLowerCase();
 		const ext = pathname.slice(pathname.lastIndexOf('.'));
-		return VIDEO_EXTENSIONS.has(ext) ? 'video' : 'image';
+		if (VIDEO_EXTENSIONS.has(ext)) return 'video';
+		if (['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.heic'].includes(ext)) return 'image';
+		return null;
 	} catch {
-		return 'image';
+		return null;
 	}
 }
 
-function readParams(ctx: IExecuteFunctions, i: number): MetaPostParams {
+async function detectItemMediaType(
+	ctx: IExecuteFunctions,
+	url: string,
+): Promise<'image' | 'video'> {
+	// Try extension first
+	const byExt = detectItemMediaTypeByExt(url);
+	if (byExt) return byExt;
+
+	// Fall back to HEAD request for Content-Type
+	try {
+		const resp = (await ctx.helpers.httpRequest({
+			method: 'HEAD',
+			url,
+			returnFullResponse: true,
+			ignoreHttpStatusErrors: true,
+		})) as { headers: Record<string, string> };
+		const ct = (resp.headers?.['content-type'] || '').toLowerCase();
+		if (ct.startsWith('video/')) return 'video';
+	} catch {
+		// Ignore — default to image
+	}
+	return 'image';
+}
+
+async function readParams(ctx: IExecuteFunctions, i: number): Promise<MetaPostParams> {
 	const mediaType = ctx.getNodeParameter('mediaType', i) as string;
 	const mediaUrl = ctx.getNodeParameter('mediaUrl', i) as string;
 	const imageSettings = ctx.getNodeParameter('imageSettings', i, {}) as IDataObject;
@@ -87,14 +113,13 @@ function readParams(ctx: IExecuteFunctions, i: number): MetaPostParams {
 
 	let carouselItems: CarouselItem[] = [];
 	if (mediaType === 'carousel') {
-		carouselItems = mediaUrl
-			.split(',')
-			.map((u) => u.trim())
-			.filter((u) => u.length > 0)
-			.map((u) => ({
-				mediaType: detectItemMediaType(u),
+		const urls = mediaUrl.split(',').map((u) => u.trim()).filter((u) => u.length > 0);
+		carouselItems = await Promise.all(
+			urls.map(async (u) => ({
+				mediaType: await detectItemMediaType(ctx, u),
 				mediaUrl: u,
-			}));
+			})),
+		);
 	}
 
 	return {
@@ -103,6 +128,7 @@ function readParams(ctx: IExecuteFunctions, i: number): MetaPostParams {
 		carouselItems,
 		caption: ctx.getNodeParameter('caption', i, '') as string,
 		hashSuffix: ctx.getNodeParameter('hashSuffix', i, '') as string,
+		location: ctx.getNodeParameter('location', i, '') as string,
 		instagramAccountId: ctx.getNodeParameter('instagramAccountId', i) as string,
 		facebookPageId: ctx.getNodeParameter('facebookPageId', i) as string,
 		graphApiVersion: ctx.getNodeParameter('graphApiVersion', i, 'v25.0') as string,
@@ -132,7 +158,7 @@ async function handleImage(
 	params: MetaPostParams,
 	caption: string,
 ): Promise<MetaPostResult> {
-	const { instagramAccountId, facebookPageId, graphApiVersion, mediaUrl } = params;
+	const { instagramAccountId, facebookPageId, graphApiVersion, mediaUrl, locationId } = params;
 
 	let fbPhotoId: string | undefined;
 	let igContainerId: string;
@@ -141,7 +167,7 @@ async function handleImage(
 	// Use ignoreHttpStatusErrors + returnFullResponse so we can inspect the response
 	// for format errors (Instagram rejects certain image formats like WebP)
 	const containerResp = await graphApi.tryCreateIgImageContainer(
-		ctx, userAccessToken, instagramAccountId, mediaUrl, caption, graphApiVersion,
+		ctx, userAccessToken, instagramAccountId, mediaUrl, caption, graphApiVersion, locationId,
 	);
 
 	if (containerResp.statusCode >= 200 && containerResp.statusCode < 300 && containerResp.body?.id) {
@@ -188,7 +214,7 @@ async function handleImage(
 
 		// Retry IG container with Facebook CDN URL
 		const retryContainer = await graphApi.createIgImageContainer(
-			ctx, userAccessToken, instagramAccountId, cdnUrl, caption, graphApiVersion,
+			ctx, userAccessToken, instagramAccountId, cdnUrl, caption, graphApiVersion, locationId,
 		);
 		igContainerId = retryContainer.id;
 	}
@@ -208,7 +234,7 @@ async function handleImage(
 
 	// Step 5: Create Facebook feed post with attached photo
 	const fbFeedPost = await graphApi.createFbFeedPost(
-		ctx, pageAccessToken, facebookPageId, caption, fbPhotoId, graphApiVersion,
+		ctx, pageAccessToken, facebookPageId, caption, fbPhotoId, graphApiVersion, locationId,
 	);
 
 	// Step 6: Get IG permalink
@@ -221,6 +247,7 @@ async function handleImage(
 		instagram_permalink: igPermalink.permalink,
 		facebook_post_id: fbFeedPost.id,
 		facebook_photo_id: fbPhotoId,
+		location_id: locationId,
 	};
 }
 
@@ -262,10 +289,29 @@ async function handleVideo(
 	params: MetaPostParams,
 	caption: string,
 ): Promise<MetaPostResult> {
-	const { instagramAccountId, facebookPageId, graphApiVersion, mediaUrl } = params;
+	const { instagramAccountId, facebookPageId, graphApiVersion, locationId } = params;
+
+	// Parse media URL: if comma-separated, split into video + cover image
+	let videoUrl: string;
+	let coverUrl: string | undefined;
+	const urls = params.mediaUrl.split(',').map((u) => u.trim()).filter((u) => u.length > 0);
+	if (urls.length >= 2) {
+		const detected = await Promise.all(
+			urls.map(async (u) => ({ url: u, type: await detectItemMediaType(ctx, u) })),
+		);
+		const video = detected.find((d) => d.type === 'video');
+		const image = detected.find((d) => d.type === 'image');
+		if (!video) {
+			throw new Error('No video URL found. When providing two URLs for a video post, one must be a video.');
+		}
+		videoUrl = video.url;
+		coverUrl = image?.url;
+	} else {
+		videoUrl = urls[0];
+	}
 
 	// Step 1: Download and convert video
-	const videoBuffer = await downloadMedia(ctx, mediaUrl);
+	const videoBuffer = await downloadMedia(ctx, videoUrl);
 	const convertedBuffer = await convertVideo(videoBuffer, {
 		videoCodec: params.videoCodec,
 		crf: params.videoCrf,
@@ -289,16 +335,16 @@ async function handleVideo(
 	// Step 3: Upload converted video to Facebook (published) — runs in parallel with IG flow
 	const fbVideoPromise = graphApi.uploadFbVideoFromBuffer(
 		ctx, pageAccessToken, facebookPageId,
-		convertedBuffer, 'video.mp4', caption, true, graphApiVersion,
+		convertedBuffer, 'video.mp4', caption, true, graphApiVersion, locationId,
 	);
 
 	// Step 4-6: IG flow — wrapped in try-catch to clean up FB video on failure
 	let igPost: { id: string };
 	try {
-		// Step 4: Create IG Reel container
+		// Step 4: Create IG Reel container (with optional cover image)
 		const igContainer = await graphApi.createIgReelContainer(
 			ctx, userAccessToken, instagramAccountId,
-			igVideoUrl, caption, graphApiVersion,
+			igVideoUrl, caption, graphApiVersion, coverUrl, locationId,
 		);
 
 		// Step 5: Poll IG container status
@@ -345,6 +391,7 @@ async function handleVideo(
 		instagram_permalink: igPermalink.permalink,
 		facebook_post_id: `${facebookPageId}_${fbVideo.id}`,
 		facebook_video_id: fbVideo.id,
+		location_id: locationId,
 	};
 }
 
@@ -357,7 +404,7 @@ async function handleCarousel(
 	params: MetaPostParams,
 	caption: string,
 ): Promise<MetaPostResult> {
-	const { instagramAccountId, facebookPageId, graphApiVersion, carouselItems } = params;
+	const { instagramAccountId, facebookPageId, graphApiVersion, carouselItems, locationId } = params;
 
 	if (carouselItems.length < 2 || carouselItems.length > 10) {
 		throw new Error(`Carousel requires 2-10 items, got ${carouselItems.length}`);
@@ -408,7 +455,7 @@ async function handleCarousel(
 		// Step 2: Create parent carousel container
 		const carouselContainer = await graphApi.createIgCarouselContainer(
 			ctx, userAccessToken, instagramAccountId,
-			childIds, caption, graphApiVersion,
+			childIds, caption, graphApiVersion, locationId,
 		);
 
 		// Step 3: Publish carousel
@@ -424,7 +471,7 @@ async function handleCarousel(
 				ctx, pageAccessToken, facebookPageId, firstImage.mediaUrl, false, graphApiVersion,
 			);
 			const fbFeedPost = await graphApi.createFbFeedPost(
-				ctx, pageAccessToken, facebookPageId, caption, fbPhoto.id, graphApiVersion,
+				ctx, pageAccessToken, facebookPageId, caption, fbPhoto.id, graphApiVersion, locationId,
 			);
 			fbPostId = fbFeedPost.id;
 		}
@@ -438,6 +485,7 @@ async function handleCarousel(
 			instagram_post_id: igPost.id,
 			instagram_permalink: igPermalink.permalink,
 			facebook_post_id: fbPostId,
+			location_id: locationId,
 		};
 	} finally {
 		for (const server of videoServers) {
@@ -504,6 +552,13 @@ export class MetaPost implements INodeType {
 				type: 'string',
 				default: '',
 				description: 'Optional hashtag suffix appended to caption',
+			},
+			{
+				displayName: 'Location',
+				name: 'location',
+				type: 'string',
+				default: '',
+				description: 'Optional location to tag the post with. Accepts a free-form query (city name, postal code, landmark, e.g. "Berlin", "10115", "Brandenburger Tor") which is resolved via Facebook\'s page search, or a Facebook Place Page ID (10+ digits) to use directly. Applied as location_id on Instagram and place on Facebook.',
 			},
 			{
 				displayName: 'Instagram Account ID',
@@ -671,7 +726,7 @@ export class MetaPost implements INodeType {
 				const credentials = await this.getCredentials('facebookGraphApi');
 				const userAccessToken = credentials.accessToken as string;
 
-				const params = readParams(this, i);
+				const params = await readParams(this, i);
 				const caption = prepareCaption(params.caption, params.hashSuffix);
 
 				// Get page access token
@@ -679,6 +734,13 @@ export class MetaPost implements INodeType {
 					this, userAccessToken, params.facebookPageId, params.graphApiVersion,
 				);
 				const pageAccessToken = pageTokenResp.access_token;
+
+				// Resolve optional location to a Facebook Place ID (shared by IG location_id and FB place)
+				if (params.location && params.location.trim().length > 0) {
+					params.locationId = await graphApi.searchPlaceId(
+						this, userAccessToken, params.location, params.graphApiVersion,
+					);
+				}
 
 				let result: MetaPostResult;
 				if (params.mediaType === 'image') {

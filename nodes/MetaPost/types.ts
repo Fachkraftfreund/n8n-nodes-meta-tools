@@ -9,6 +9,8 @@ export interface MetaPostParams {
 	carouselItems: CarouselItem[];
 	caption: string;
 	hashSuffix: string;
+	location: string;
+	locationId?: string;
 	instagramAccountId: string;
 	facebookPageId: string;
 	graphApiVersion: string;
@@ -36,6 +38,7 @@ export interface MetaPostResult {
 	facebook_post_id: string;
 	facebook_photo_id?: string;
 	facebook_video_id?: string;
+	location_id?: string;
 }
 
 export interface PageTokenResponse {
