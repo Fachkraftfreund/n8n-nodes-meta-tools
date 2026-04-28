@@ -333,9 +333,29 @@ async function handleVideo(
 	const igVideoUrl = tempServer.url;
 
 	// Step 3: Upload converted video to Facebook (published) — runs in parallel with IG flow
+	// Also download cover image (if provided) so we can use it as FB thumbnail
+	let fbThumbnail: { buffer: Buffer; mimeType: string; filename: string } | undefined;
+	if (coverUrl) {
+		try {
+			const coverBuffer = await downloadMedia(ctx, coverUrl);
+			const ext = detectItemMediaTypeByExt(coverUrl);
+			// Derive mime type from URL extension; default to JPEG
+			const url = new URL(coverUrl);
+			const lower = url.pathname.toLowerCase();
+			let mime = 'image/jpeg';
+			let fname = 'cover.jpg';
+			if (lower.endsWith('.png')) { mime = 'image/png'; fname = 'cover.png'; }
+			else if (lower.endsWith('.gif')) { mime = 'image/gif'; fname = 'cover.gif'; }
+			else if (lower.endsWith('.webp')) { mime = 'image/webp'; fname = 'cover.webp'; }
+			fbThumbnail = { buffer: coverBuffer, mimeType: mime, filename: fname };
+			void ext; // suppress unused
+		} catch {
+			// Cover download failed — proceed without thumbnail
+		}
+	}
 	const fbVideoPromise = graphApi.uploadFbVideoFromBuffer(
 		ctx, pageAccessToken, facebookPageId,
-		convertedBuffer, 'video.mp4', caption, true, graphApiVersion, locationId,
+		convertedBuffer, 'video.mp4', caption, true, graphApiVersion, locationId, fbThumbnail,
 	);
 
 	// Step 4-6: IG flow — wrapped in try-catch to clean up FB video on failure

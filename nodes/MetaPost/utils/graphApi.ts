@@ -287,12 +287,20 @@ export async function uploadFbVideoFromBuffer(
 	published: boolean,
 	apiVersion: string,
 	placeId?: string,
+	thumbnail?: { buffer: Buffer; mimeType: string; filename: string },
 ): Promise<FbVideoResponse> {
 	const formData = new FormData();
 	formData.append('source', new Blob([buffer], { type: 'video/mp4' }), filename);
 	formData.append('description', description);
 	formData.append('published', published.toString());
 	if (placeId) formData.append('place', placeId);
+	if (thumbnail) {
+		formData.append(
+			'thumb',
+			new Blob([thumbnail.buffer], { type: thumbnail.mimeType }),
+			thumbnail.filename,
+		);
+	}
 	formData.append('access_token', pageAccessToken);
 
 	return ctx.helpers.httpRequest({
