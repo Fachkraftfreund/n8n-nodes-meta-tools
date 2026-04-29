@@ -450,86 +450,100 @@ export class MetaInsights implements INodeType {
 						});
 						continue;
 					}
-					case 'igInsights': {
-						// IG Insights needs two calls: time-series vs total_value metrics
-						const igId = this.getNodeParameter(
-							'instagramAccountId',
-							i,
-						) as string;
-						const allMetrics = (
-							(this.getNodeParameter('igMetric', i) as string) ||
-							DEFAULT_METRICS.igInsights
-						).split(',').map((m) => m.trim());
+					case 'instagramOrganic': {
+					const igOrgId = this.getNodeParameter('instagramAccountId', i) as string;
+					const igOrgOpts = this.getNodeParameter('additionalOptions', i, {}) as IDataObject;
 
-						const tsMetrics = allMetrics.filter((m) =>
-							IG_TIME_SERIES_METRICS.has(m),
-						);
-						const tvMetrics = allMetrics.filter(
-							(m) => !IG_TIME_SERIES_METRICS.has(m),
-						);
+					const igExtraQs: Record<string, string> = {};
+					if (igOrgOpts.since) igExtraQs.since = igOrgOpts.since as string;
+					if (igOrgOpts.until) igExtraQs.until = igOrgOpts.until as string;
 
-						const opts = this.getNodeParameter(
-							'additionalOptions',
-							i,
-							{},
-						) as IDataObject;
-						const extraQs: Record<string, string> = {};
-						if (opts.since) extraQs.since = opts.since as string;
-						if (opts.until) extraQs.until = opts.until as string;
+					const allIgMetrics = DEFAULT_METRICS.instagramOrganic.split(',').map((m) => m.trim());
+					const tsMetrics = allIgMetrics.filter((m) => IG_TIME_SERIES_METRICS.has(m));
+					const tvMetrics = allIgMetrics.filter((m) => !IG_TIME_SERIES_METRICS.has(m));
 
-						const makeIgCall = async (
-							metrics: string[],
-							metricType?: string,
-						) => {
-							const callQs: Record<string, string> = {
-								access_token: accessToken,
-								metric: metrics.join(','),
-								period: 'day',
-								...extraQs,
-							};
-							if (metricType)
-								callQs.metric_type = metricType;
-							const resp = (await this.helpers.httpRequest({
-								method: 'GET',
-								url: `${GRAPH_BASE}/${apiVersion}/${igId}/insights`,
-								qs: callQs,
-								ignoreHttpStatusErrors: true,
-								returnFullResponse: true,
-							})) as { body: any; statusCode: number };
-							if (resp.statusCode >= 400) {
-								const apiErr = resp.body?.error;
-								const msg = apiErr
-									? `Graph API error ${apiErr.code || resp.statusCode}: ${apiErr.message}`
-									: `HTTP ${resp.statusCode}: ${JSON.stringify(resp.body)}`;
-								throw new Error(msg);
-							}
-							return resp.body;
+					const makeIgOrgCall = async (metrics: string[], metricType?: string) => {
+						const callQs: Record<string, string> = {
+							access_token: accessToken,
+							metric: metrics.join(','),
+							period: 'day',
+							...igExtraQs,
 						};
+						if (metricType) callQs.metric_type = metricType;
+						const resp = (await this.helpers.httpRequest({
+							method: 'GET',
+							url: `${GRAPH_BASE}/${apiVersion}/${igOrgId}/insights`,
+							qs: callQs,
+							ignoreHttpStatusErrors: true,
+							returnFullResponse: true,
+						})) as { body: any; statusCode: number };
+						if (resp.statusCode >= 400) {
+							const apiErr = resp.body?.error;
+							const msg = apiErr
+								? `Graph API error ${apiErr.code || resp.statusCode}: ${apiErr.message}`
+								: `HTTP ${resp.statusCode}: ${JSON.stringify(resp.body)}`;
+							throw new Error(msg);
+						}
+						return resp.body;
+					};
 
-						if (tsMetrics.length > 0) {
-							const resp = await makeIgCall(tsMetrics);
-							if (Array.isArray(resp.data)) {
-								for (const entry of resp.data) {
-									returnData.push({ json: entry });
-								}
-							}
-						}
-						if (tvMetrics.length > 0) {
-							const resp = await makeIgCall(
-								tvMetrics,
-								'total_value',
+					const igResult: Record<string, string | number> = {
+						platform: 'instagram_organic',
+						reach: 0,
+						impressions: 0,
+						engagement: 0,
+						clicks: 0,
+						video_views: 0,
+						follows_net: 0,
+						date_start: (igOrgOpts.since as string) ?? '',
+						date_end: (igOrgOpts.until as string) ?? '',
+					};
+
+					// Time-series metrics: sum daily values over the date range
+					if (tsMetrics.length > 0) {
+						const tsResp = await makeIgOrgCall(tsMetrics);
+						for (const entry of (tsResp?.data ?? []) as Array<{
+							name: string;
+							values: Array<{ value: number }>;
+						}>) {
+							const total = (entry.values ?? []).reduce(
+								(sum, v) => sum + (typeof v.value === 'number' ? v.value : 0),
+								0,
 							);
-							if (Array.isArray(resp.data)) {
-								for (const entry of resp.data) {
-									returnData.push({ json: entry });
-								}
+							if (entry.name === 'reach') igResult.reach = total;
+						}
+					}
+
+					// Total-value metrics: aggregate over date range
+					if (tvMetrics.length > 0) {
+						const tvResp = await makeIgOrgCall(tvMetrics, 'total_value');
+						for (const entry of (tvResp?.data ?? []) as Array<{
+							name: string;
+							total_value?: { value: number };
+							values?: Array<{ value: number }>;
+						}>) {
+							const value = entry.total_value?.value ?? entry.values?.[0]?.value ?? 0;
+							switch (entry.name) {
+								case 'total_interactions':
+									igResult.engagement = value;
+									break;
+								case 'website_clicks':
+									igResult.clicks = value;
+									break;
+								case 'views':
+									igResult.impressions = value;
+									igResult.video_views = value;
+									break;
+								case 'follows_and_unfollows':
+									igResult.follows_net = value;
+									break;
 							}
 						}
-						if (tsMetrics.length === 0 && tvMetrics.length === 0) {
-							returnData.push({ json: { data: [] } });
-						}
-						continue; // skip shared request logic below
 					}
+
+					returnData.push({ json: igResult });
+					continue;
+				}
 					case 'igProfile': {
 						const igId = this.getNodeParameter(
 							'instagramAccountId',
