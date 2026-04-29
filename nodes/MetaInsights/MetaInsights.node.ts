@@ -9,23 +9,24 @@ import type {
 const GRAPH_BASE = 'https://graph.facebook.com';
 
 const DEFAULT_FIELDS: Record<string, string> = {
-	fbAdsAccount:
-		'spend,impressions,reach,clicks,video_play_actions,actions,cpm,cpc,ctr,frequency,conversions,cost_per_action_type,cost_per_conversion,purchase_roas,website_ctr,unique_clicks,unique_ctr,cost_per_unique_click,outbound_clicks,outbound_clicks_ctr,video_30_sec_watched_actions,video_avg_time_watched_actions',
 	fbAdsCampaign:
 		'campaign_name,spend,impressions,reach,clicks,video_play_actions,actions,cpm,cpc,ctr,frequency,conversions,cost_per_action_type,cost_per_conversion,purchase_roas,website_ctr,unique_clicks,unique_ctr,cost_per_unique_click,outbound_clicks,outbound_clicks_ctr,video_30_sec_watched_actions,video_avg_time_watched_actions',
 	igProfile:
 		'followers_count,username,name,biography,website,media_count,profile_picture_url,ig_id',
 };
 
+const PAID_BRAND_FIELDS =
+	'spend,impressions,reach,clicks,ctr,cpc,cpm,frequency,video_play_actions,actions';
+
 const DEFAULT_METRICS: Record<string, string> = {
-	fbPageInsights:
-		'page_impressions_unique,page_post_engagements,page_follows,page_daily_follows,page_daily_follows_unique,page_daily_unfollows_unique,page_views_total,page_video_views,page_video_views_unique,page_actions_post_reactions_total,page_total_actions,page_posts_impressions,page_posts_impressions_unique',
-	igInsights:
-		'reach,follower_count,website_clicks,profile_views,accounts_engaged,total_interactions,likes,comments,shares,saves,replies,follows_and_unfollows,profile_links_taps,views',
+	facebookOrganic:
+		'page_impressions_unique,page_posts_impressions,page_post_engagements,page_video_views',
+	instagramOrganic:
+		'reach,total_interactions,website_clicks,views,follows_and_unfollows',
 };
 
-// IG metrics that use period=day without metric_type (time-series)
-const IG_TIME_SERIES_METRICS = new Set(['reach', 'follower_count']);
+// IG metrics that use period=day without metric_type (time-series, summed over range)
+const IG_TIME_SERIES_METRICS = new Set(['reach']);
 // All other IG metrics require metric_type=total_value
 
 export class MetaInsights implements INodeType {
