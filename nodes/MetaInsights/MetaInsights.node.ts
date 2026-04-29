@@ -178,10 +178,8 @@ export class MetaInsights implements INodeType {
 					show: { operation: ['facebookOrganic'] },
 				},
 				options: [
-					{ name: 'Day', value: 'day' },
 					{ name: 'Week', value: 'week' },
 					{ name: '28 Days', value: 'days_28' },
-					{ name: 'Lifetime', value: 'lifetime' },
 					{ name: 'Total Over Range', value: 'total_over_range' },
 				],
 				default: 'week',
@@ -312,7 +310,7 @@ export class MetaInsights implements INodeType {
 						const reach = parseInt(row?.reach ?? '0', 10);
 						const videoViews =
 							(row?.video_play_actions as Array<{ action_type: string; value: string }> ?? [])
-								[0]?.value ?? '0';
+								.find((a) => a.action_type === 'video_view')?.value ?? '0';
 						const leadActionTypes = new Set([
 							'lead',
 							'onsite_conversion.lead_grouped',
@@ -478,7 +476,7 @@ export class MetaInsights implements INodeType {
 							video_views: 0,
 							follows_net: 0,
 							date_start: (igOrgOpts.since as string) ?? '',
-							date_end: (igOrgOpts.until as string) ?? '',
+							date_stop: (igOrgOpts.until as string) ?? '',
 						};
 
 						// Time-series metrics: sum daily values over the date range
@@ -513,6 +511,7 @@ export class MetaInsights implements INodeType {
 										igResult.clicks = value;
 										break;
 									case 'views':
+										// IG 'views' covers all content views (Reels, posts, Stories)
 										igResult.impressions = value;
 										igResult.video_views = value;
 										break;
@@ -544,7 +543,7 @@ export class MetaInsights implements INodeType {
 
 				// Additional options (since, until, limit) — applies to fbAdsCampaign only
 				// (facebookPaid, instagramPaid, facebookOrganic, instagramOrganic use continue above)
-				if (operation !== 'igProfile') {
+				if (operation === 'fbAdsCampaign') {
 					const opts = this.getNodeParameter(
 						'additionalOptions',
 						i,
