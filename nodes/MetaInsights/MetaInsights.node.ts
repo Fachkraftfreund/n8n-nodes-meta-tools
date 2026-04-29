@@ -277,6 +277,72 @@ export class MetaInsights implements INodeType {
 				const qs: Record<string, string> = { access_token: accessToken };
 
 				switch (operation) {
+					case 'facebookPaid':
+					case 'instagramPaid': {
+						const adAccountId = this.getNodeParameter('adAccountId', i) as string;
+						const datePreset = this.getNodeParameter('datePreset', i) as string;
+						const targetPlatform = operation === 'facebookPaid' ? 'facebook' : 'instagram';
+
+						const paidResp = (await this.helpers.httpRequest({
+							method: 'GET',
+							url: `${GRAPH_BASE}/${apiVersion}/${adAccountId}/insights`,
+							qs: {
+								access_token: accessToken,
+								fields: PAID_BRAND_FIELDS,
+								date_preset: datePreset,
+								level: 'account',
+								breakdowns: 'publisher_platform',
+							},
+							ignoreHttpStatusErrors: true,
+							returnFullResponse: true,
+						})) as { body: any; statusCode: number };
+
+						if (paidResp.statusCode >= 400) {
+							const apiErr = paidResp.body?.error;
+							const msg = apiErr
+								? `Graph API error ${apiErr.code || paidResp.statusCode}: ${apiErr.message}`
+								: `HTTP ${paidResp.statusCode}: ${JSON.stringify(paidResp.body)}`;
+							throw new Error(msg);
+						}
+
+						const rows = (paidResp.body?.data ?? []) as Array<Record<string, any>>;
+						const row = rows.find((r) => r.publisher_platform === targetPlatform) ?? null;
+
+						const spend = row?.spend ?? '0';
+						const reach = parseInt(row?.reach ?? '0', 10);
+						const videoViews =
+							(row?.video_play_actions as Array<{ action_type: string; value: string }> ?? [])
+								[0]?.value ?? '0';
+						const leadActionTypes = new Set([
+							'lead',
+							'onsite_conversion.lead_grouped',
+							'offsite_conversion.fb_pixel_lead',
+						]);
+						const leads = (row?.actions as Array<{ action_type: string; value: string }> ?? [])
+							.filter((a) => leadActionTypes.has(a.action_type))
+							.reduce((sum, a) => sum + parseInt(a.value ?? '0', 10), 0);
+						const cpf = reach > 0 ? (parseFloat(spend) / reach).toFixed(6) : '0';
+
+						returnData.push({
+							json: {
+								platform: targetPlatform,
+								spend,
+								impressions: row?.impressions ?? '0',
+								reach: row?.reach ?? '0',
+								clicks: row?.clicks ?? '0',
+								video_views: videoViews,
+								leads: String(leads),
+								ctr: row?.ctr ?? '0',
+								cpc: row?.cpc ?? '0',
+								cpm: row?.cpm ?? '0',
+								cpf,
+								frequency: row?.frequency ?? '0',
+								date_start: row?.date_start ?? '',
+								date_stop: row?.date_stop ?? '',
+							},
+						});
+						continue;
+					}
 					case 'fbAdsAccount': {
 						const adAccountId = this.getNodeParameter(
 							'adAccountId',
