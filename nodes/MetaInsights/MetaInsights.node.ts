@@ -387,69 +387,69 @@ export class MetaInsights implements INodeType {
 						break;
 					}
 					case 'facebookOrganic': {
-					const pageId = this.getNodeParameter('facebookPageId', i) as string;
-					const period = this.getNodeParameter('period', i) as string;
-					const orgOpts = this.getNodeParameter('additionalOptions', i, {}) as IDataObject;
+						const pageId = this.getNodeParameter('facebookPageId', i) as string;
+						const period = this.getNodeParameter('period', i) as string;
+						const orgOpts = this.getNodeParameter('additionalOptions', i, {}) as IDataObject;
 
-					// Page Insights requires a Page Access Token
-					let pageAccessToken = accessToken;
-					try {
-						const pageTokenResp = (await this.helpers.httpRequest({
-							method: 'GET',
-							url: `${GRAPH_BASE}/${apiVersion}/${pageId}`,
-							qs: { fields: 'access_token', access_token: accessToken },
-						})) as { access_token?: string };
-						if (pageTokenResp.access_token) pageAccessToken = pageTokenResp.access_token;
-					} catch {
-						// Falls back to user access token if page token exchange fails
-					}
+						// Page Insights requires a Page Access Token
+						let pageAccessToken = accessToken;
+						try {
+							const pageTokenResp = (await this.helpers.httpRequest({
+								method: 'GET',
+								url: `${GRAPH_BASE}/${apiVersion}/${pageId}`,
+								qs: { fields: 'access_token', access_token: accessToken },
+							})) as { access_token?: string };
+							if (pageTokenResp.access_token) pageAccessToken = pageTokenResp.access_token;
+						} catch {
+							// Falls back to user access token if page token exchange fails
+						}
 
-					const orgQs: Record<string, string> = {
-						access_token: pageAccessToken,
-						metric: DEFAULT_METRICS.facebookOrganic,
-						period,
-					};
-					if (orgOpts.since) orgQs.since = orgOpts.since as string;
-					if (orgOpts.until) orgQs.until = orgOpts.until as string;
-
-					const orgResp = (await this.helpers.httpRequest({
-						method: 'GET',
-						url: `${GRAPH_BASE}/${apiVersion}/${pageId}/insights`,
-						qs: orgQs,
-						ignoreHttpStatusErrors: true,
-						returnFullResponse: true,
-					})) as { body: any; statusCode: number };
-
-					if (orgResp.statusCode >= 400) {
-						const apiErr = orgResp.body?.error;
-						const msg = apiErr
-							? `Graph API error ${apiErr.code || orgResp.statusCode}: ${apiErr.message}`
-							: `HTTP ${orgResp.statusCode}: ${JSON.stringify(orgResp.body)}`;
-						throw new Error(msg);
-					}
-
-					// Each entry has a values[] time-series; take the last (most recent) value
-					const metricMap: Record<string, number> = {};
-					for (const entry of (orgResp.body?.data ?? []) as Array<{
-						name: string;
-						values: Array<{ value: number | Record<string, number> }>;
-					}>) {
-						const lastVal = entry.values?.[entry.values.length - 1]?.value;
-						metricMap[entry.name] = typeof lastVal === 'number' ? lastVal : 0;
-					}
-
-					returnData.push({
-						json: {
-							platform: 'facebook_organic',
-							reach: metricMap['page_impressions_unique'] ?? 0,
-							impressions: metricMap['page_posts_impressions'] ?? 0,
-							engagement: metricMap['page_post_engagements'] ?? 0,
-							video_views: metricMap['page_video_views'] ?? 0,
+						const orgQs: Record<string, string> = {
+							access_token: pageAccessToken,
+							metric: DEFAULT_METRICS.facebookOrganic,
 							period,
-						},
-					});
-					continue;
-				}
+						};
+						if (orgOpts.since) orgQs.since = orgOpts.since as string;
+						if (orgOpts.until) orgQs.until = orgOpts.until as string;
+
+						const orgResp = (await this.helpers.httpRequest({
+							method: 'GET',
+							url: `${GRAPH_BASE}/${apiVersion}/${pageId}/insights`,
+							qs: orgQs,
+							ignoreHttpStatusErrors: true,
+							returnFullResponse: true,
+						})) as { body: any; statusCode: number };
+
+						if (orgResp.statusCode >= 400) {
+							const apiErr = orgResp.body?.error;
+							const msg = apiErr
+								? `Graph API error ${apiErr.code || orgResp.statusCode}: ${apiErr.message}`
+								: `HTTP ${orgResp.statusCode}: ${JSON.stringify(orgResp.body)}`;
+							throw new Error(msg);
+						}
+
+						// Each entry has a values[] time-series; take the last (most recent) value
+						const metricMap: Record<string, number> = {};
+						for (const entry of (orgResp.body?.data ?? []) as Array<{
+							name: string;
+							values: Array<{ value: number | Record<string, number> }>;
+						}>) {
+							const lastVal = entry.values?.[entry.values.length - 1]?.value;
+							metricMap[entry.name] = typeof lastVal === 'number' ? lastVal : 0;
+						}
+
+						returnData.push({
+							json: {
+								platform: 'facebook_organic',
+								reach: metricMap['page_impressions_unique'] ?? 0,
+								impressions: metricMap['page_posts_impressions'] ?? 0,
+								engagement: metricMap['page_post_engagements'] ?? 0,
+								video_views: metricMap['page_video_views'] ?? 0,
+								period,
+							},
+						});
+						continue;
+					}
 					case 'igInsights': {
 						// IG Insights needs two calls: time-series vs total_value metrics
 						const igId = this.getNodeParameter(
