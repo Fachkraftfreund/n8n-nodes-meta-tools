@@ -343,24 +343,6 @@ export class MetaInsights implements INodeType {
 						});
 						continue;
 					}
-					case 'fbAdsAccount': {
-						const adAccountId = this.getNodeParameter(
-							'adAccountId',
-							i,
-						) as string;
-						const fields =
-							(this.getNodeParameter('fields', i) as string) ||
-							DEFAULT_FIELDS.fbAdsAccount;
-						const datePreset = this.getNodeParameter(
-							'datePreset',
-							i,
-						) as string;
-						url = `${GRAPH_BASE}/${apiVersion}/${adAccountId}/insights`;
-						qs.fields = fields;
-						qs.date_preset = datePreset;
-						qs.level = 'account';
-						break;
-					}
 					case 'fbAdsCampaign': {
 						const adAccountId = this.getNodeParameter(
 							'adAccountId',
@@ -560,7 +542,8 @@ export class MetaInsights implements INodeType {
 						throw new Error(`Unknown operation: ${operation}`);
 				}
 
-				// Additional options (since, until, limit)
+				// Additional options (since, until, limit) — applies to fbAdsCampaign only
+				// (facebookPaid, instagramPaid, facebookOrganic, instagramOrganic use continue above)
 				if (operation !== 'igProfile') {
 					const opts = this.getNodeParameter(
 						'additionalOptions',
