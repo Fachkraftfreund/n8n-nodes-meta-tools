@@ -52,25 +52,29 @@ export class MetaInsights implements INodeType {
 				noDataExpression: true,
 				options: [
 					{
-						name: 'Facebook Ads Insights (Account)',
-						value: 'fbAdsAccount',
-						description: 'Account-level ad spend, impressions, reach, etc.',
+						name: 'Facebook Paid',
+						value: 'facebookPaid',
+						description: 'Brand ad spend, impressions, reach, etc. (Facebook placement only)',
 					},
 					{
-						name: 'Facebook Ads Insights (Campaign)',
+						name: 'Facebook Organic',
+						value: 'facebookOrganic',
+						description: 'Page impressions, reach, engagement, video views',
+					},
+					{
+						name: 'Instagram Paid',
+						value: 'instagramPaid',
+						description: 'Brand ad spend, impressions, reach, etc. (Instagram placement only)',
+					},
+					{
+						name: 'Instagram Organic',
+						value: 'instagramOrganic',
+						description: 'Reach, engagement, video views, website clicks',
+					},
+					{
+						name: 'Facebook Ads (Campaign)',
 						value: 'fbAdsCampaign',
-						description:
-							'Campaign/ad-set/ad level insights with optional filtering',
-					},
-					{
-						name: 'Facebook Page Insights',
-						value: 'fbPageInsights',
-						description: 'Page impressions, engagement, follows, etc.',
-					},
-					{
-						name: 'Instagram Insights',
-						value: 'igInsights',
-						description: 'Instagram account impressions and reach',
+						description: 'Campaign/ad-set/ad level insights with optional filtering',
 					},
 					{
 						name: 'Instagram Profile Info',
@@ -78,7 +82,7 @@ export class MetaInsights implements INodeType {
 						description: 'Follower count, username, and other profile fields',
 					},
 				],
-				default: 'fbAdsAccount',
+				default: 'facebookPaid',
 			},
 
 			// ── Entity IDs ────────────────────────────────────────
