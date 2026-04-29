@@ -92,7 +92,7 @@ export class MetaInsights implements INodeType {
 				type: 'string',
 				required: true,
 				displayOptions: {
-					show: { operation: ['fbAdsAccount', 'fbAdsCampaign'] },
+					show: { operation: ['facebookPaid', 'instagramPaid', 'fbAdsCampaign'] },
 				},
 				default: '',
 				placeholder: 'act_123456789',
@@ -103,7 +103,7 @@ export class MetaInsights implements INodeType {
 				name: 'facebookPageId',
 				type: 'string',
 				required: true,
-				displayOptions: { show: { operation: ['fbPageInsights'] } },
+				displayOptions: { show: { operation: ['facebookOrganic'] } },
 				default: '',
 			},
 			{
@@ -112,7 +112,7 @@ export class MetaInsights implements INodeType {
 				type: 'string',
 				required: true,
 				displayOptions: {
-					show: { operation: ['igInsights', 'igProfile'] },
+					show: { operation: ['instagramOrganic', 'igProfile'] },
 				},
 				default: '',
 				description: 'Instagram Business Account ID',
@@ -125,34 +125,12 @@ export class MetaInsights implements INodeType {
 				type: 'string',
 				displayOptions: {
 					show: {
-						operation: ['fbAdsAccount', 'fbAdsCampaign', 'igProfile'],
+						operation: ['fbAdsCampaign', 'igProfile'],
 					},
 				},
 				default: '',
 				description:
 					'Comma-separated fields to return. Leave empty for defaults.',
-			},
-			{
-				displayName: 'Metric',
-				name: 'metric',
-				type: 'string',
-				displayOptions: {
-					show: { operation: ['fbPageInsights'] },
-				},
-				default: '',
-				description:
-					'Comma-separated metrics. Leave empty for defaults. Valid metrics: page_impressions_unique, page_post_engagements, page_follows, page_daily_follows, page_daily_follows_unique, page_daily_unfollows_unique, page_views_total, page_video_views, page_video_views_unique, page_actions_post_reactions_total, page_total_actions, page_posts_impressions, page_posts_impressions_unique',
-			},
-			{
-				displayName: 'Metric',
-				name: 'igMetric',
-				type: 'string',
-				displayOptions: {
-					show: { operation: ['igInsights'] },
-				},
-				default: '',
-				description:
-					'Comma-separated metrics. Leave empty for defaults. Valid metrics: reach, follower_count, website_clicks, profile_views, online_followers, accounts_engaged, total_interactions, likes, comments, shares, saves, replies, follows_and_unfollows, profile_links_taps, views',
 			},
 
 			// ── Date / Period ─────────────────────────────────────
@@ -161,7 +139,7 @@ export class MetaInsights implements INodeType {
 				name: 'datePreset',
 				type: 'options',
 				displayOptions: {
-					show: { operation: ['fbAdsAccount', 'fbAdsCampaign'] },
+					show: { operation: ['facebookPaid', 'instagramPaid', 'fbAdsCampaign'] },
 				},
 				options: [
 					{ name: 'Today', value: 'today' },
@@ -197,7 +175,7 @@ export class MetaInsights implements INodeType {
 				name: 'period',
 				type: 'options',
 				displayOptions: {
-					show: { operation: ['fbPageInsights', 'igInsights'] },
+					show: { operation: ['facebookOrganic'] },
 				},
 				options: [
 					{ name: 'Day', value: 'day' },
@@ -240,7 +218,9 @@ export class MetaInsights implements INodeType {
 				type: 'collection',
 				placeholder: 'Add Option',
 				default: {},
-				displayOptions: { hide: { operation: ['igProfile'] } },
+				displayOptions: {
+					show: { operation: ['facebookOrganic', 'instagramOrganic', 'fbAdsCampaign'] },
+				},
 				options: [
 					{
 						displayName: 'Since',
