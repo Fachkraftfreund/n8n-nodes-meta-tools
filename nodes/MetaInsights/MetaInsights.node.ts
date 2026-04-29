@@ -20,7 +20,7 @@ const PAID_BRAND_FIELDS =
 
 const DEFAULT_METRICS: Record<string, string> = {
 	facebookOrganic:
-		'page_impressions_unique,page_posts_impressions,page_post_engagements,page_video_views',
+		'page_impressions_unique,page_posts_impressions,page_post_engagements,page_video_views,page_fan_adds',
 	instagramOrganic:
 		'reach,total_interactions,website_clicks,views,follows_and_unfollows',
 };
@@ -28,6 +28,80 @@ const DEFAULT_METRICS: Record<string, string> = {
 // IG metrics that use period=day without metric_type (time-series, summed over range)
 const IG_TIME_SERIES_METRICS = new Set(['reach']);
 // All other IG metrics require metric_type=total_value
+
+function presetToDateRange(preset: string): { since: string; until: string } {
+	const today = new Date();
+	today.setHours(0, 0, 0, 0);
+	const fmt = (d: Date) => d.toISOString().slice(0, 10);
+	const shift = (base: Date, days: number) => {
+		const d = new Date(base);
+		d.setDate(d.getDate() + days);
+		return d;
+	};
+	switch (preset) {
+		case 'today':
+			return { since: fmt(today), until: fmt(today) };
+		case 'yesterday': {
+			const y = shift(today, -1);
+			return { since: fmt(y), until: fmt(y) };
+		}
+		case 'last_3d':
+			return { since: fmt(shift(today, -3)), until: fmt(shift(today, -1)) };
+		case 'last_7d':
+			return { since: fmt(shift(today, -7)), until: fmt(shift(today, -1)) };
+		case 'last_14d':
+			return { since: fmt(shift(today, -14)), until: fmt(shift(today, -1)) };
+		case 'last_28d':
+			return { since: fmt(shift(today, -28)), until: fmt(shift(today, -1)) };
+		case 'last_30d':
+			return { since: fmt(shift(today, -30)), until: fmt(shift(today, -1)) };
+		case 'last_90d':
+			return { since: fmt(shift(today, -90)), until: fmt(shift(today, -1)) };
+		case 'last_week_mon_sun': {
+			const dow = today.getDay(); // 0=Sun
+			const lastSun = shift(today, -(dow === 0 ? 7 : dow));
+			return { since: fmt(shift(lastSun, -6)), until: fmt(lastSun) };
+		}
+		case 'last_week_sun_sat': {
+			const dow = today.getDay();
+			const lastSat = shift(today, -(dow === 6 ? 7 : dow + 1));
+			return { since: fmt(shift(lastSat, -6)), until: fmt(lastSat) };
+		}
+		case 'this_week_mon_today': {
+			const dow = today.getDay();
+			return { since: fmt(shift(today, -(dow === 0 ? 6 : dow - 1))), until: fmt(today) };
+		}
+		case 'this_week_sun_today':
+			return { since: fmt(shift(today, -today.getDay())), until: fmt(today) };
+		case 'this_month':
+			return { since: fmt(new Date(today.getFullYear(), today.getMonth(), 1)), until: fmt(today) };
+		case 'last_month':
+			return {
+				since: fmt(new Date(today.getFullYear(), today.getMonth() - 1, 1)),
+				until: fmt(new Date(today.getFullYear(), today.getMonth(), 0)),
+			};
+		case 'this_quarter': {
+			const q = Math.floor(today.getMonth() / 3);
+			return { since: fmt(new Date(today.getFullYear(), q * 3, 1)), until: fmt(today) };
+		}
+		case 'last_quarter': {
+			const q = Math.floor(today.getMonth() / 3);
+			return {
+				since: fmt(new Date(today.getFullYear(), (q - 1) * 3, 1)),
+				until: fmt(new Date(today.getFullYear(), q * 3, 0)),
+			};
+		}
+		case 'this_year':
+			return { since: fmt(new Date(today.getFullYear(), 0, 1)), until: fmt(today) };
+		case 'last_year':
+			return {
+				since: fmt(new Date(today.getFullYear() - 1, 0, 1)),
+				until: fmt(new Date(today.getFullYear() - 1, 11, 31)),
+			};
+		default:
+			return { since: fmt(shift(today, -7)), until: fmt(shift(today, -1)) };
+	}
+}
 
 export class MetaInsights implements INodeType {
 	description: INodeTypeDescription = {
@@ -133,13 +207,32 @@ export class MetaInsights implements INodeType {
 					'Comma-separated fields to return. Leave empty for defaults.',
 			},
 
-			// ── Date / Period ─────────────────────────────────────
+			// ── Date Mode / Period ───────────────────────────────────
+			{
+				displayName: 'Date Mode',
+				name: 'dateMode',
+				type: 'options',
+				noDataExpression: true,
+				displayOptions: {
+					show: {
+						operation: ['facebookPaid', 'instagramPaid', 'facebookOrganic', 'instagramOrganic'],
+					},
+				},
+				options: [
+					{ name: 'Date Preset', value: 'preset' },
+					{ name: 'Custom Range', value: 'custom' },
+				],
+				default: 'preset',
+			},
 			{
 				displayName: 'Date Preset',
 				name: 'datePreset',
 				type: 'options',
 				displayOptions: {
-					show: { operation: ['facebookPaid', 'instagramPaid', 'fbAdsCampaign'] },
+					show: {
+						operation: ['facebookPaid', 'instagramPaid', 'fbAdsCampaign', 'instagramOrganic'],
+						dateMode: ['preset'],
+					},
 				},
 				options: [
 					{ name: 'Today', value: 'today' },
@@ -175,7 +268,10 @@ export class MetaInsights implements INodeType {
 				name: 'period',
 				type: 'options',
 				displayOptions: {
-					show: { operation: ['facebookOrganic'] },
+					show: {
+						operation: ['facebookOrganic'],
+						dateMode: ['preset'],
+					},
 				},
 				options: [
 					{ name: 'Week', value: 'week' },
@@ -183,6 +279,34 @@ export class MetaInsights implements INodeType {
 					{ name: 'Total Over Range', value: 'total_over_range' },
 				],
 				default: 'week',
+			},
+			{
+				displayName: 'Since',
+				name: 'since',
+				type: 'string',
+				displayOptions: {
+					show: {
+						operation: ['facebookPaid', 'instagramPaid', 'facebookOrganic', 'instagramOrganic'],
+						dateMode: ['custom'],
+					},
+				},
+				default: '',
+				placeholder: 'YYYY-MM-DD',
+				description: 'Start date for the custom date range',
+			},
+			{
+				displayName: 'Until',
+				name: 'until',
+				type: 'string',
+				displayOptions: {
+					show: {
+						operation: ['facebookPaid', 'instagramPaid', 'facebookOrganic', 'instagramOrganic'],
+						dateMode: ['custom'],
+					},
+				},
+				default: '',
+				placeholder: 'YYYY-MM-DD',
+				description: 'End date for the custom date range',
 			},
 
 			// ── Campaign-specific ─────────────────────────────────
@@ -217,7 +341,7 @@ export class MetaInsights implements INodeType {
 				placeholder: 'Add Option',
 				default: {},
 				displayOptions: {
-					show: { operation: ['facebookOrganic', 'instagramOrganic', 'fbAdsCampaign'] },
+					show: { operation: ['fbAdsCampaign'] },
 				},
 				options: [
 					{
@@ -225,16 +349,14 @@ export class MetaInsights implements INodeType {
 						name: 'since',
 						type: 'string',
 						default: '',
-						description:
-							'Start date (Unix timestamp or YYYY-MM-DD depending on endpoint)',
+						description: 'Start date (YYYY-MM-DD)',
 					},
 					{
 						displayName: 'Until',
 						name: 'until',
 						type: 'string',
 						default: '',
-						description:
-							'End date (Unix timestamp or YYYY-MM-DD depending on endpoint)',
+						description: 'End date (YYYY-MM-DD)',
 					},
 					{
 						displayName: 'Limit',
@@ -278,19 +400,28 @@ export class MetaInsights implements INodeType {
 					case 'facebookPaid':
 					case 'instagramPaid': {
 						const adAccountId = this.getNodeParameter('adAccountId', i) as string;
-						const datePreset = this.getNodeParameter('datePreset', i) as string;
+						const dateMode = this.getNodeParameter('dateMode', i, 'preset') as string;
 						const targetPlatform = operation === 'facebookPaid' ? 'facebook' : 'instagram';
+
+						const paidQs: Record<string, string> = {
+							access_token: accessToken,
+							fields: PAID_BRAND_FIELDS,
+							level: 'account',
+							breakdowns: 'publisher_platform',
+						};
+						if (dateMode === 'preset') {
+							paidQs.date_preset = this.getNodeParameter('datePreset', i) as string;
+						} else {
+							const since = this.getNodeParameter('since', i, '') as string;
+							const until = this.getNodeParameter('until', i, '') as string;
+							if (since) paidQs.since = since;
+							if (until) paidQs.until = until;
+						}
 
 						const paidResp = (await this.helpers.httpRequest({
 							method: 'GET',
 							url: `${GRAPH_BASE}/${apiVersion}/${adAccountId}/insights`,
-							qs: {
-								access_token: accessToken,
-								fields: PAID_BRAND_FIELDS,
-								date_preset: datePreset,
-								level: 'account',
-								breakdowns: 'publisher_platform',
-							},
+							qs: paidQs,
 							ignoreHttpStatusErrors: true,
 							returnFullResponse: true,
 						})) as { body: any; statusCode: number };
@@ -368,8 +499,7 @@ export class MetaInsights implements INodeType {
 					}
 					case 'facebookOrganic': {
 						const pageId = this.getNodeParameter('facebookPageId', i) as string;
-						const period = this.getNodeParameter('period', i) as string;
-						const orgOpts = this.getNodeParameter('additionalOptions', i, {}) as IDataObject;
+						const fbOrgDateMode = this.getNodeParameter('dateMode', i, 'preset') as string;
 
 						// Page Insights requires a Page Access Token
 						let pageAccessToken = accessToken;
@@ -384,13 +514,35 @@ export class MetaInsights implements INodeType {
 							// Falls back to user access token if page token exchange fails
 						}
 
+						let orgPeriod: string;
 						const orgQs: Record<string, string> = {
 							access_token: pageAccessToken,
 							metric: DEFAULT_METRICS.facebookOrganic,
-							period,
 						};
-						if (orgOpts.since) orgQs.since = orgOpts.since as string;
-						if (orgOpts.until) orgQs.until = orgOpts.until as string;
+						if (fbOrgDateMode === 'preset') {
+							orgPeriod = this.getNodeParameter('period', i) as string;
+							orgQs.period = orgPeriod;
+						} else {
+							orgPeriod = 'total_over_range';
+							orgQs.period = orgPeriod;
+							const since = this.getNodeParameter('since', i, '') as string;
+							const until = this.getNodeParameter('until', i, '') as string;
+							if (since) orgQs.since = since;
+							if (until) orgQs.until = until;
+						}
+
+						// Get current follower count from page profile
+						let followersCurrentFB = 0;
+						try {
+							const fanResp = (await this.helpers.httpRequest({
+								method: 'GET',
+								url: `${GRAPH_BASE}/${apiVersion}/${pageId}`,
+								qs: { fields: 'fan_count', access_token: pageAccessToken },
+							})) as { fan_count?: number };
+							followersCurrentFB = fanResp.fan_count ?? 0;
+						} catch {
+							// Leave as 0 if unavailable
+						}
 
 						const orgResp = (await this.helpers.httpRequest({
 							method: 'GET',
@@ -425,18 +577,42 @@ export class MetaInsights implements INodeType {
 								impressions: metricMap['page_posts_impressions'] ?? 0,
 								engagement: metricMap['page_post_engagements'] ?? 0,
 								video_views: metricMap['page_video_views'] ?? 0,
-								period,
+								followers_current: followersCurrentFB,
+								followers_new: metricMap['page_fan_adds'] ?? 0,
+								period: orgPeriod,
 							},
 						});
 						continue;
 					}
 					case 'instagramOrganic': {
 						const igOrgId = this.getNodeParameter('instagramAccountId', i) as string;
-						const igOrgOpts = this.getNodeParameter('additionalOptions', i, {}) as IDataObject;
+						const igOrgDateMode = this.getNodeParameter('dateMode', i, 'preset') as string;
 
 						const igExtraQs: Record<string, string> = {};
-						if (igOrgOpts.since) igExtraQs.since = igOrgOpts.since as string;
-						if (igOrgOpts.until) igExtraQs.until = igOrgOpts.until as string;
+						if (igOrgDateMode === 'preset') {
+							const igPreset = this.getNodeParameter('datePreset', i) as string;
+							const { since, until } = presetToDateRange(igPreset);
+							igExtraQs.since = since;
+							igExtraQs.until = until;
+						} else {
+							const since = this.getNodeParameter('since', i, '') as string;
+							const until = this.getNodeParameter('until', i, '') as string;
+							if (since) igExtraQs.since = since;
+							if (until) igExtraQs.until = until;
+						}
+
+						// Get current follower count from IG profile
+						let followersCurrentIG = 0;
+						try {
+							const igProfileResp = (await this.helpers.httpRequest({
+								method: 'GET',
+								url: `${GRAPH_BASE}/${apiVersion}/${igOrgId}`,
+								qs: { fields: 'followers_count', access_token: accessToken },
+							})) as { followers_count?: number };
+							followersCurrentIG = igProfileResp.followers_count ?? 0;
+						} catch {
+							// Leave as 0 if unavailable
+						}
 
 						const allIgMetrics = DEFAULT_METRICS.instagramOrganic.split(',').map((m) => m.trim());
 						const tsMetrics = allIgMetrics.filter((m) => IG_TIME_SERIES_METRICS.has(m));
@@ -474,9 +650,10 @@ export class MetaInsights implements INodeType {
 							engagement: 0,
 							clicks: 0,
 							video_views: 0,
-							follows_net: 0,
-							date_start: (igOrgOpts.since as string) ?? '',
-							date_stop: (igOrgOpts.until as string) ?? '',
+							followers_current: followersCurrentIG,
+							followers_new: 0,
+							date_start: igExtraQs.since ?? '',
+							date_stop: igExtraQs.until ?? '',
 						};
 
 						// Time-series metrics: sum daily values over the date range
@@ -516,7 +693,7 @@ export class MetaInsights implements INodeType {
 										igResult.video_views = value;
 										break;
 									case 'follows_and_unfollows':
-										igResult.follows_net = value;
+										igResult.followers_new = value;
 										break;
 								}
 							}
