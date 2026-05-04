@@ -412,13 +412,15 @@ export class MetaInsights implements INodeType {
 					case 'instagramPaid': {
 						const adAccountId = this.getNodeParameter('adAccountId', i) as string;
 						const dateMode = this.getNodeParameter('dateMode', i, 'preset') as string;
+						const campaignNameFilter = this.getNodeParameter('campaignNameFilter', i, '') as string;
 						const targetPlatform = operation === 'facebookPaid' ? 'facebook' : 'instagram';
 
 						const paidQs: Record<string, string> = {
 							access_token: accessToken,
-							fields: PAID_BRAND_FIELDS,
-							level: 'account',
+							fields: `campaign_name,${PAID_BRAND_FIELDS}`,
+							level: 'campaign',
 							breakdowns: 'publisher_platform',
+							limit: '500',
 						};
 						if (dateMode === 'preset') {
 							paidQs.date_preset = this.getNodeParameter('datePreset', i) as string;
@@ -428,63 +430,105 @@ export class MetaInsights implements INodeType {
 							if (since) paidQs.since = since;
 							if (until) paidQs.until = until;
 						}
-						const campaignNameFilter = this.getNodeParameter('campaignNameFilter', i, '') as string;
-						if (campaignNameFilter) {
-							paidQs.filtering = JSON.stringify([
-								{ field: 'campaign.name', operator: 'CONTAIN', value: campaignNameFilter },
-							]);
+
+						// Fetch all pages
+						const allCampaignRows: Array<Record<string, any>> = [];
+						let nextPageUrl: string | null =
+							`${GRAPH_BASE}/${apiVersion}/${adAccountId}/insights`;
+						let nextPageQs: Record<string, string> | null = paidQs;
+						while (nextPageUrl) {
+							const pageResp = (await this.helpers.httpRequest({
+								method: 'GET',
+								url: nextPageUrl,
+								qs: nextPageQs ?? undefined,
+								ignoreHttpStatusErrors: true,
+								returnFullResponse: true,
+							})) as { body: any; statusCode: number };
+							if (pageResp.statusCode >= 400) {
+								const apiErr = pageResp.body?.error;
+								throw new Error(
+									apiErr
+										? `Graph API error ${apiErr.code || pageResp.statusCode}: ${apiErr.message}`
+										: `HTTP ${pageResp.statusCode}: ${JSON.stringify(pageResp.body)}`,
+								);
+							}
+							allCampaignRows.push(...((pageResp.body?.data ?? []) as Array<Record<string, any>>));
+							nextPageUrl = pageResp.body?.paging?.next ?? null;
+							nextPageQs = null; // next URL already contains all params
 						}
 
-						const paidResp = (await this.helpers.httpRequest({
-							method: 'GET',
-							url: `${GRAPH_BASE}/${apiVersion}/${adAccountId}/insights`,
-							qs: paidQs,
-							ignoreHttpStatusErrors: true,
-							returnFullResponse: true,
-						})) as { body: any; statusCode: number };
+						// Filter by platform and optionally by campaign name
+						const filterLower = campaignNameFilter.toLowerCase();
+						const matchingRows = allCampaignRows.filter(
+							(r) =>
+								r.publisher_platform === targetPlatform &&
+								(!filterLower ||
+									(r.campaign_name as string ?? '').toLowerCase().includes(filterLower)),
+						);
 
-						if (paidResp.statusCode >= 400) {
-							const apiErr = paidResp.body?.error;
-							const msg = apiErr
-								? `Graph API error ${apiErr.code || paidResp.statusCode}: ${apiErr.message}`
-								: `HTTP ${paidResp.statusCode}: ${JSON.stringify(paidResp.body)}`;
-							throw new Error(msg);
-						}
-
-						const rows = (paidResp.body?.data ?? []) as Array<Record<string, any>>;
-						const row = rows.find((r) => r.publisher_platform === targetPlatform) ?? null;
-
-						const spend = row?.spend ?? '0';
-						const reach = parseInt(row?.reach ?? '0', 10);
-						const videoViews =
-							(row?.video_play_actions as Array<{ action_type: string; value: string }> ?? [])
-								.find((a) => a.action_type === 'video_view')?.value ?? '0';
+						// Aggregate metrics across matching campaign rows
 						const leadActionTypes = new Set([
 							'lead',
 							'onsite_conversion.lead_grouped',
 							'offsite_conversion.fb_pixel_lead',
 						]);
-						const leads = (row?.actions as Array<{ action_type: string; value: string }> ?? [])
-							.filter((a) => leadActionTypes.has(a.action_type))
-							.reduce((sum, a) => sum + parseInt(a.value ?? '0', 10), 0);
-						const cpf = reach > 0 ? (parseFloat(spend) / reach).toFixed(6) : '0';
+						let totalSpend = 0;
+						let totalImpressions = 0;
+						let totalReach = 0;
+						let totalClicks = 0;
+						let totalVideoViews = 0;
+						let totalLeads = 0;
+						let dateStart = '';
+						let dateStop = '';
+						for (const r of matchingRows) {
+							totalSpend += parseFloat(r.spend ?? '0');
+							totalImpressions += parseInt(r.impressions ?? '0', 10);
+							totalReach += parseInt(r.reach ?? '0', 10);
+							totalClicks += parseInt(r.clicks ?? '0', 10);
+							totalVideoViews += parseInt(
+								(r.video_play_actions as Array<{ action_type: string; value: string }> ?? [])
+									.find((a) => a.action_type === 'video_view')?.value ?? '0',
+								10,
+							);
+							totalLeads += (r.actions as Array<{ action_type: string; value: string }> ?? [])
+								.filter((a) => leadActionTypes.has(a.action_type))
+								.reduce((sum, a) => sum + parseInt(a.value ?? '0', 10), 0);
+							if (!dateStart) dateStart = r.date_start ?? '';
+							if (!dateStop) dateStop = r.date_stop ?? '';
+						}
+
+						// Recalculate derived metrics from aggregated totals
+						const spendStr = totalSpend.toFixed(2);
+						const ctr =
+							totalImpressions > 0
+								? ((totalClicks / totalImpressions) * 100).toFixed(2)
+								: '0';
+						const cpc = totalClicks > 0 ? (totalSpend / totalClicks).toFixed(2) : '0';
+						const cpm =
+							totalImpressions > 0
+								? ((totalSpend / totalImpressions) * 1000).toFixed(2)
+								: '0';
+						const frequency =
+							totalReach > 0 ? (totalImpressions / totalReach).toFixed(2) : '0';
+						const cpf =
+							totalReach > 0 ? (totalSpend / totalReach).toFixed(6) : '0';
 
 						returnData.push({
 							json: {
 								platform: targetPlatform,
-								spend,
-								impressions: row?.impressions ?? '0',
-								reach: row?.reach ?? '0',
-								clicks: row?.clicks ?? '0',
-								video_views: videoViews,
-								leads: String(leads),
-								ctr: row?.ctr ?? '0',
-								cpc: row?.cpc ?? '0',
-								cpm: row?.cpm ?? '0',
+								spend: spendStr,
+								impressions: String(totalImpressions),
+								reach: String(totalReach),
+								clicks: String(totalClicks),
+								video_views: String(totalVideoViews),
+								leads: String(totalLeads),
+								ctr,
+								cpc,
+								cpm,
 								cpf,
-								frequency: row?.frequency ?? '0',
-								date_start: row?.date_start ?? '',
-								date_stop: row?.date_stop ?? '',
+								frequency,
+								date_start: dateStart,
+								date_stop: dateStop,
 							},
 						});
 						continue;
