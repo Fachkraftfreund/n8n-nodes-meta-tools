@@ -417,7 +417,7 @@ export class MetaInsights implements INodeType {
 
 						const paidQs: Record<string, string> = {
 							access_token: accessToken,
-							fields: `campaign_name,${PAID_BRAND_FIELDS}`,
+							fields: `campaign_id,campaign_name,${PAID_BRAND_FIELDS}`,
 							level: 'campaign',
 							breakdowns: 'publisher_platform',
 							limit: '500',
@@ -530,6 +530,7 @@ export class MetaInsights implements INodeType {
 								date_start: dateStart,
 								date_stop: dateStop,
 								debug_campaigns: matchingRows.map((r) => ({
+									id: r.campaign_id,
 									name: r.campaign_name,
 									spend: r.spend ?? '0',
 								})),
