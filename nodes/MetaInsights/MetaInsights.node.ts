@@ -529,6 +529,10 @@ export class MetaInsights implements INodeType {
 								frequency,
 								date_start: dateStart,
 								date_stop: dateStop,
+								debug_campaigns: matchingRows.map((r) => ({
+									name: r.campaign_name,
+									spend: r.spend ?? '0',
+								})),
 							},
 						});
 						continue;
