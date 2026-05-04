@@ -533,6 +533,11 @@ export class MetaInsights implements INodeType {
 									name: r.campaign_name,
 									spend: r.spend ?? '0',
 								})),
+								debug_spend_direct: matchingRows
+									.reduce((s, r) => s + parseFloat(r.spend ?? '0'), 0)
+									.toFixed(2),
+								debug_row_count: matchingRows.length,
+								debug_total_rows_fetched: allCampaignRows.length,
 							},
 						});
 						continue;
