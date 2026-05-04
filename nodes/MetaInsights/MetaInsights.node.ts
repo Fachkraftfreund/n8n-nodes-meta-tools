@@ -421,6 +421,10 @@ export class MetaInsights implements INodeType {
 							level: 'campaign',
 							breakdowns: 'publisher_platform',
 							limit: '500',
+							// Match Ads Manager default: exclude deleted/archived campaigns
+							filtering: JSON.stringify([
+								{ field: 'effective_status', operator: 'IN', value: ['ACTIVE', 'PAUSED'] },
+							]),
 						};
 						if (dateMode === 'preset') {
 							paidQs.date_preset = this.getNodeParameter('datePreset', i) as string;
