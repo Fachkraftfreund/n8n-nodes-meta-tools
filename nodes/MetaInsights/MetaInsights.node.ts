@@ -308,6 +308,17 @@ export class MetaInsights implements INodeType {
 				placeholder: 'YYYY-MM-DD',
 				description: 'End date for the custom date range',
 			},
+			{
+				displayName: 'Campaign Name Filter',
+				name: 'campaignNameFilter',
+				type: 'string',
+				displayOptions: {
+					show: { operation: ['facebookPaid', 'instagramPaid'] },
+				},
+				default: '',
+				placeholder: 'beitrag',
+				description: 'Only include campaigns whose name contains this text (case-insensitive). Leave empty to include all campaigns.',
+			},
 
 			// ── Campaign-specific ─────────────────────────────────
 			{
@@ -416,6 +427,12 @@ export class MetaInsights implements INodeType {
 							const until = this.getNodeParameter('until', i, '') as string;
 							if (since) paidQs.since = since;
 							if (until) paidQs.until = until;
+						}
+						const campaignNameFilter = this.getNodeParameter('campaignNameFilter', i, '') as string;
+						if (campaignNameFilter) {
+							paidQs.filtering = JSON.stringify([
+								{ field: 'campaign.name', operator: 'CONTAIN', value: campaignNameFilter },
+							]);
 						}
 
 						const paidResp = (await this.helpers.httpRequest({
