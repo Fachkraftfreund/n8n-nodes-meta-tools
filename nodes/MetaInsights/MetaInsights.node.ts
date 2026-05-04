@@ -103,6 +103,15 @@ function presetToDateRange(preset: string): { since: string; until: string } {
 	}
 }
 
+function getISOWeek(dateStr: string): number {
+	const d = new Date(dateStr);
+	const utc = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+	const day = utc.getUTCDay() || 7;
+	utc.setUTCDate(utc.getUTCDate() + 4 - day);
+	const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+	return Math.ceil((((utc.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+}
+
 export class MetaInsights implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Meta Insights',
@@ -319,6 +328,16 @@ export class MetaInsights implements INodeType {
 				placeholder: 'beitrag',
 				description: 'Only include campaigns whose name contains this text (case-insensitive). Leave empty to include all campaigns.',
 			},
+			{
+				displayName: 'Auto KW Filter',
+				name: 'useKwFilter',
+				type: 'boolean',
+				displayOptions: {
+					show: { operation: ['facebookPaid', 'instagramPaid'] },
+				},
+				default: false,
+				description: 'Automatically filter campaigns by the calendar week (KW) matching the selected date range. Campaign names must contain e.g. "KW 18".',
+			},
 
 			// ── Campaign-specific ─────────────────────────────────
 			{
@@ -413,6 +432,7 @@ export class MetaInsights implements INodeType {
 						const adAccountId = this.getNodeParameter('adAccountId', i) as string;
 						const dateMode = this.getNodeParameter('dateMode', i, 'preset') as string;
 						const campaignNameFilter = this.getNodeParameter('campaignNameFilter', i, '') as string;
+						const useKwFilter = this.getNodeParameter('useKwFilter', i, false) as boolean;
 						const targetPlatform = operation === 'facebookPaid' ? 'facebook' : 'instagram';
 
 						const paidQs: Record<string, string> = {
@@ -422,14 +442,21 @@ export class MetaInsights implements INodeType {
 							breakdowns: 'publisher_platform',
 							limit: '500',
 						};
+						let sinceDateStr = '';
 						if (dateMode === 'preset') {
-							paidQs.date_preset = this.getNodeParameter('datePreset', i) as string;
+							const preset = this.getNodeParameter('datePreset', i) as string;
+							paidQs.date_preset = preset;
+							sinceDateStr = presetToDateRange(preset).since;
 						} else {
 							const since = this.getNodeParameter('since', i, '') as string;
 							const until = this.getNodeParameter('until', i, '') as string;
-							if (since) paidQs.since = since;
+							if (since) { paidQs.since = since; sinceDateStr = since; }
 							if (until) paidQs.until = until;
 						}
+
+						const kwFilter = useKwFilter && sinceDateStr
+							? `kw ${getISOWeek(sinceDateStr)}`
+							: '';
 
 						// Fetch all pages
 						const allCampaignRows: Array<Record<string, any>> = [];
@@ -457,14 +484,15 @@ export class MetaInsights implements INodeType {
 							nextPageQs = null; // next URL already contains all params
 						}
 
-						// Filter by platform and optionally by campaign name
+						// Filter by platform, optional name filter, and optional KW filter
 						const filterLower = campaignNameFilter.toLowerCase();
-						const matchingRows = allCampaignRows.filter(
-							(r) =>
-								r.publisher_platform === targetPlatform &&
-								(!filterLower ||
-									(r.campaign_name as string ?? '').toLowerCase().includes(filterLower)),
-						);
+						const matchingRows = allCampaignRows.filter((r) => {
+							if (r.publisher_platform !== targetPlatform) return false;
+							const name = (r.campaign_name as string ?? '').toLowerCase();
+							if (filterLower && !name.includes(filterLower)) return false;
+							if (kwFilter && !name.includes(kwFilter)) return false;
+							return true;
+						});
 
 						// Aggregate metrics across matching campaign rows
 						const leadActionTypes = new Set([
