@@ -391,13 +391,16 @@ export async function createFbFeedPost(
 	pageAccessToken: string,
 	pageId: string,
 	message: string,
-	mediaFbId: string,
+	mediaFbIds: string | string[],
 	apiVersion: string,
 	placeId?: string,
 ): Promise<FbFeedPostResponse> {
 	const formData = new FormData();
 	formData.append('message', message);
-	formData.append('attached_media[0]', JSON.stringify({ media_fbid: mediaFbId }));
+	const ids = Array.isArray(mediaFbIds) ? mediaFbIds : [mediaFbIds];
+	ids.forEach((id, idx) => {
+		formData.append(`attached_media[${idx}]`, JSON.stringify({ media_fbid: id }));
+	});
 	if (placeId) formData.append('place', placeId);
 	formData.append('access_token', pageAccessToken);
 

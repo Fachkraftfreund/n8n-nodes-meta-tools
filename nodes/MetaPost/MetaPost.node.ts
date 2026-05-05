@@ -425,8 +425,11 @@ async function handleCarousel(
 		throw new Error(`Carousel requires 2-10 items, got ${carouselItems.length}`);
 	}
 
-	// Step 1: Create child containers for each item
+	// Step 1: Create child containers for each item.
+	// Keep the first converted video buffer in memory so we can mirror it to FB
+	// when the carousel has no image items.
 	const childIds: string[] = [];
+	let firstVideoBuffer: Buffer | undefined;
 
 	for (const item of carouselItems) {
 		if (item.mediaType === 'image') {
@@ -460,6 +463,8 @@ async function handleCarousel(
 			);
 			await pollIgContainer(ctx, userAccessToken, child.id, graphApiVersion);
 			childIds.push(child.id);
+
+			if (!firstVideoBuffer) firstVideoBuffer = convertedBuffer;
 		}
 	}
 
@@ -474,17 +479,30 @@ async function handleCarousel(
 		ctx, userAccessToken, instagramAccountId, carouselContainer.id, graphApiVersion,
 	);
 
-	// Step 4: Upload first image to Facebook as the feed post photo
-	const firstImage = carouselItems.find((item) => item.mediaType === 'image');
+	// Step 4: Mirror the carousel to Facebook.
+	// If any image items exist, attach all of them to a single multi-photo feed post.
+	// Otherwise (video-only carousel), publish the first video as a standalone FB video.
+	const imageItems = carouselItems.filter((item) => item.mediaType === 'image');
 	let fbPostId = '';
-	if (firstImage) {
-		const fbPhoto = await graphApi.uploadFbPhotoFromUrl(
-			ctx, pageAccessToken, facebookPageId, firstImage.mediaUrl, false, graphApiVersion,
+	if (imageItems.length > 0) {
+		const photoIds = await Promise.all(
+			imageItems.map(async (item) => {
+				const fbPhoto = await graphApi.uploadFbPhotoFromUrl(
+					ctx, pageAccessToken, facebookPageId, item.mediaUrl, false, graphApiVersion,
+				);
+				return fbPhoto.id;
+			}),
 		);
 		const fbFeedPost = await graphApi.createFbFeedPost(
-			ctx, pageAccessToken, facebookPageId, caption, fbPhoto.id, graphApiVersion, locationId,
+			ctx, pageAccessToken, facebookPageId, caption, photoIds, graphApiVersion, locationId,
 		);
 		fbPostId = fbFeedPost.id;
+	} else if (firstVideoBuffer) {
+		const fbVideo = await graphApi.uploadFbVideoFromBuffer(
+			ctx, pageAccessToken, facebookPageId,
+			firstVideoBuffer, 'video.mp4', caption, true, graphApiVersion, locationId,
+		);
+		fbPostId = `${facebookPageId}_${fbVideo.id}`;
 	}
 
 	// Step 5: Get IG permalink
