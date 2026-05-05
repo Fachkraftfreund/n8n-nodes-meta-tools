@@ -50,6 +50,11 @@ export interface IgContainerResponse {
 	id: string;
 }
 
+export interface IgResumableContainerResponse {
+	id: string;
+	uri: string;
+}
+
 export interface IgPublishResponse {
 	id: string;
 }

@@ -1,30 +1,26 @@
 /**
- * Integration test: video posting via Cloudflare Tunnel.
+ * Integration test: post a real Instagram Reel + Facebook Video using
+ * the resumable upload flow (no public URL needed — same flow as the
+ * production node). Cleans up created posts when done.
  *
- * Downloads a video, re-encodes it with ffmpeg, serves it via a local HTTP
- * server tunneled through cloudflared (no interstitial, unlike ngrok free tier),
- * then posts it to Instagram (Reel) and Facebook (Video).
- * Cleans up created posts when done.
+ * Usage:  node test/test-video.mjs
+ *         node test/test-video.mjs --keep   # don't delete on success
  *
- * Usage:  node test/test-video.mjs            # full test with tunnel
- *         node test/test-video.mjs --direct    # test with original VIDEO_URL only
- *
- * Requires: .env in project root, cloudflared on PATH
+ * Requires: .env in project root with USER_ACCESS_TOKEN, INSTAGRAM_ACCOUNT_ID,
+ * FACEBOOK_PAGE_ID, VIDEO_URL.
  */
 
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'fs';
 import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { createServer } from 'http';
 import { spawn } from 'child_process';
-import { randomUUID } from 'crypto';
 import { tmpdir } from 'os';
 import { createRequire } from 'module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const envPath = resolve(__dirname, '..', '.env');
 
-// ── Load .env manually ──────────────────────────────────────────
+// ── Load .env ─────────────────────────────────────────────────
 const envContent = readFileSync(envPath, 'utf-8');
 for (const line of envContent.split('\n')) {
 	const trimmed = line.trim();
@@ -39,7 +35,6 @@ for (const line of envContent.split('\n')) {
 	if (!process.env[key]) process.env[key] = val;
 }
 
-// ── Config ──────────────────────────────────────────────────────
 const USER_TOKEN = process.env.USER_ACCESS_TOKEN;
 const IG_ACCOUNT = process.env.INSTAGRAM_ACCOUNT_ID;
 const FB_PAGE    = process.env.FACEBOOK_PAGE_ID;
@@ -47,14 +42,13 @@ const VIDEO_URL  = process.env.VIDEO_URL;
 const CAPTION    = process.env.CAPTION || 'Video test – will be deleted';
 const API        = process.env.GRAPH_API_VERSION || 'v25.0';
 const BASE       = 'https://graph.facebook.com';
-const SERVE_PORT = 5680;
+const KEEP       = process.argv.includes('--keep');
 
 if (!USER_TOKEN || !IG_ACCOUNT || !FB_PAGE || !VIDEO_URL) {
 	console.error('Missing required .env values (USER_ACCESS_TOKEN, INSTAGRAM_ACCOUNT_ID, FACEBOOK_PAGE_ID, VIDEO_URL).');
 	process.exit(1);
 }
 
-// IDs for cleanup
 const cleanup = { igPostId: null, fbVideoId: null };
 
 // ── Graph API Helpers ───────────────────────────────────────────
@@ -62,40 +56,26 @@ async function graphGet(path, params) {
 	const url = new URL(`${BASE}/${API}/${path}`);
 	for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 	const res = await fetch(url);
-	const body = await res.json();
-	return { status: res.status, body };
+	return { status: res.status, body: await res.json() };
 }
-
 async function graphPost(path, params) {
 	const url = new URL(`${BASE}/${API}/${path}`);
 	for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 	const res = await fetch(url, { method: 'POST' });
-	const body = await res.json();
-	return { status: res.status, body };
+	return { status: res.status, body: await res.json() };
 }
-
 async function graphDelete(path, token) {
 	const url = new URL(`${BASE}/${API}/${path}`);
 	url.searchParams.set('access_token', token);
 	const res = await fetch(url, { method: 'DELETE' });
-	const body = await res.json();
-	return { status: res.status, body };
+	return { status: res.status, body: await res.json() };
 }
 
-function step(name) {
-	console.log(`\n${'─'.repeat(60)}\n🔹 ${name}\n${'─'.repeat(60)}`);
-}
+function step(name) { console.log(`\n${'─'.repeat(60)}\n🔹 ${name}\n${'─'.repeat(60)}`); }
+function ok(label, data) { console.log(`   ✅ ${label}:`, JSON.stringify(data, null, 2)); }
+function fail(label, data) { console.log(`   ❌ ${label}:`, JSON.stringify(data, null, 2)); }
 
-function ok(label, data) {
-	console.log(`   ✅ ${label}:`, JSON.stringify(data, null, 2));
-}
-
-function fail(label, data) {
-	console.log(`   ❌ ${label}:`, JSON.stringify(data, null, 2));
-}
-
-// ── FFmpeg Helpers ──────────────────────────────────────────────
-
+// ── FFmpeg ──────────────────────────────────────────────────────
 function getFfmpegPath() {
 	try {
 		const require = createRequire(import.meta.url);
@@ -115,17 +95,17 @@ async function downloadVideo(url) {
 }
 
 async function reencodeVideo(inputBuffer) {
-	console.log('   Re-encoding video with ffmpeg…');
+	console.log('   Re-encoding video with ffmpeg (production args)…');
 	const prefix = join(tmpdir(), `metapost_test_${Date.now()}_${Math.random().toString(36).slice(2)}`);
-	const tmpIn  = `${prefix}_in.mp4`;
+	const tmpIn = `${prefix}_in.mp4`;
 	const tmpOut = `${prefix}_out.mp4`;
-
 	writeFileSync(tmpIn, inputBuffer);
 
-	const ffmpeg = getFfmpegPath();
+	// Mirror nodes/MetaPost/utils/ffmpeg.ts convertVideo()
 	const args = [
 		'-i', tmpIn,
 		'-c:v', 'libx264',
+		'-pix_fmt', 'yuv420p',
 		'-profile:v', 'high',
 		'-level', '4.0',
 		'-crf', '23',
@@ -144,195 +124,31 @@ async function reencodeVideo(inputBuffer) {
 		tmpOut,
 	];
 
-	await new Promise((resolve, reject) => {
-		const proc = spawn(ffmpeg, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+	await new Promise((res, rej) => {
+		const proc = spawn(getFfmpegPath(), args, { stdio: ['ignore', 'pipe', 'pipe'] });
 		let stderr = '';
 		proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-		proc.on('close', (code) => {
-			if (code === 0) resolve();
-			else reject(new Error(`ffmpeg exited with code ${code}: ${stderr}`));
-		});
-		proc.on('error', (err) => reject(new Error(`Failed to spawn ffmpeg: ${err.message}`)));
+		proc.on('close', (code) => code === 0 ? res() : rej(new Error(`ffmpeg exited with code ${code}: ${stderr}`)));
+		proc.on('error', (err) => rej(new Error(`Failed to spawn ffmpeg: ${err.message}`)));
 	});
 
 	const output = readFileSync(tmpOut);
 	console.log(`   Re-encoded: ${(output.length / 1024 / 1024).toFixed(1)} MB`);
-
 	for (const f of [tmpIn, tmpOut]) {
 		try { if (existsSync(f)) unlinkSync(f); } catch { /* ignore */ }
 	}
-
 	return output;
 }
 
-// ── Temp Video Server ──────────────────────────────────────────
-
-function parseRange(header, total) {
-	const match = header.match(/^bytes=(\d+)-(\d*)$/);
-	if (!match) return null;
-	const start = parseInt(match[1], 10);
-	const end = match[2] ? parseInt(match[2], 10) : total - 1;
-	if (start > end || start >= total) return null;
-	return { start, end: Math.min(end, total - 1) };
-}
-
-function startTempServer(buffer, port) {
-	return new Promise((resolve, reject) => {
-		const id = randomUUID();
-		const servePath = `/${id}.mp4`;
-		const total = buffer.length;
-
-		const server = createServer((req, res) => {
-			console.log(`   [server] ${req.method} ${req.url} (Range: ${req.headers['range'] || 'none'})`);
-
-			if (req.url !== servePath || (req.method !== 'GET' && req.method !== 'HEAD')) {
-				res.writeHead(404);
-				res.end();
-				return;
-			}
-
-			if (req.method === 'HEAD') {
-				res.writeHead(200, {
-					'Content-Type': 'video/mp4',
-					'Content-Length': total.toString(),
-					'Accept-Ranges': 'bytes',
-					'Connection': 'keep-alive',
-				});
-				res.end();
-				return;
-			}
-
-			const rangeHeader = req.headers['range'];
-			if (rangeHeader) {
-				const range = parseRange(rangeHeader, total);
-				if (!range) {
-					res.writeHead(416, { 'Content-Range': `bytes */${total}` });
-					res.end();
-					return;
-				}
-				const { start, end } = range;
-				res.writeHead(206, {
-					'Content-Type': 'video/mp4',
-					'Content-Range': `bytes ${start}-${end}/${total}`,
-					'Content-Length': (end - start + 1).toString(),
-					'Accept-Ranges': 'bytes',
-					'Connection': 'keep-alive',
-				});
-				res.end(buffer.subarray(start, end + 1));
-			} else {
-				res.writeHead(200, {
-					'Content-Type': 'video/mp4',
-					'Content-Length': total.toString(),
-					'Accept-Ranges': 'bytes',
-					'Connection': 'keep-alive',
-				});
-				res.end(buffer);
-			}
-		});
-
-		server.on('error', reject);
-		server.listen(port, '0.0.0.0', () => {
-			resolve({ servePath, server });
-		});
-	});
-}
-
-// ── Cloudflare Tunnel ──────────────────────────────────────────
-
-function startCloudflaredTunnel(port) {
-	return new Promise((resolve, reject) => {
-		const proc = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${port}`], {
-			stdio: ['ignore', 'pipe', 'pipe'],
-		});
-
-		let resolved = false;
-		let stderr = '';
-
-		// cloudflared prints the public URL to stderr
-		proc.stderr.on('data', (chunk) => {
-			const text = chunk.toString();
-			stderr += text;
-
-			// Look for the tunnel URL in cloudflared output
-			const match = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
-			if (match && !resolved) {
-				resolved = true;
-				resolve({
-					url: match[0],
-					process: proc,
-					close: () => new Promise((res) => {
-						proc.on('exit', () => res());
-						proc.kill('SIGTERM');
-						setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} res(); }, 3000);
-					}),
-				});
-			}
-		});
-
-		proc.on('error', (err) => {
-			if (!resolved) reject(new Error(`Failed to start cloudflared: ${err.message}`));
-		});
-
-		proc.on('exit', (code) => {
-			if (!resolved) reject(new Error(`cloudflared exited with code ${code} before establishing tunnel.\n${stderr}`));
-		});
-
-		// Timeout after 30 seconds
-		setTimeout(() => {
-			if (!resolved) {
-				proc.kill();
-				reject(new Error(`cloudflared timed out (30s). Output:\n${stderr}`));
-			}
-		}, 30_000);
-	});
-}
-
 // ── Main ────────────────────────────────────────────────────────
-
-let tunnel = null;
-let httpServer = null;
-
 async function run() {
 	let pageAccessToken;
 
-	// ── 1. Download & Re-encode Video ────────────────────────────
 	step('1. Download & Re-encode Video');
 	const rawVideo = await downloadVideo(VIDEO_URL);
 	const videoBuffer = await reencodeVideo(rawVideo);
 
-	// ── 2. Start Local Server + Cloudflare Tunnel ────────────────
-	step('2. Start Local HTTP Server + Cloudflare Tunnel');
-	const { servePath, server } = await startTempServer(videoBuffer, SERVE_PORT);
-	httpServer = server;
-	console.log(`   Local server listening on port ${SERVE_PORT}, path: ${servePath}`);
-
-	console.log('   Starting cloudflared tunnel (this may take a few seconds)…');
-	tunnel = await startCloudflaredTunnel(SERVE_PORT);
-	const videoPublicUrl = `${tunnel.url}${servePath}`;
-	ok('Cloudflare tunnel', { tunnelUrl: tunnel.url, videoPublicUrl });
-
-	// Quick self-test (retry a few times — DNS propagation may take a moment)
-	console.log('   Verifying tunnel (waiting for DNS propagation)…');
-	for (let attempt = 1; attempt <= 10; attempt++) {
-		try {
-			const headRes = await fetch(videoPublicUrl, { method: 'HEAD' });
-			if (headRes.ok) {
-				ok('Tunnel self-test', { status: headRes.status, contentLength: headRes.headers.get('content-length') });
-				break;
-			}
-			console.log(`   Attempt ${attempt}/10: HTTP ${headRes.status}, retrying…`);
-		} catch (err) {
-			console.log(`   Attempt ${attempt}/10: ${err.cause?.code || err.message}, retrying…`);
-		}
-		if (attempt === 10) {
-			fail('Tunnel self-test failed after 10 attempts', {});
-			return;
-		}
-		await new Promise(r => setTimeout(r, 3000));
-	}
-
-	// ── 3. Get Page Access Token ─────────────────────────────────
-	step('3. Get Page Access Token');
+	step('2. Get Page Access Token');
 	{
 		const r = await graphGet(FB_PAGE, { fields: 'access_token', access_token: USER_TOKEN });
 		if (r.status === 200 && r.body.access_token) {
@@ -344,101 +160,92 @@ async function run() {
 		}
 	}
 
-	// ── 4. Create Instagram Reel Container ───────────────────────
-	step('4. Create Instagram Reel Container');
+	step('3. Create Resumable IG Reel Container');
 	let igContainerId;
+	let uploadUri;
 	{
 		const r = await graphPost(`${IG_ACCOUNT}/media`, {
-			video_url: videoPublicUrl,
 			media_type: 'REELS',
+			upload_type: 'resumable',
 			share_to_feed: 'true',
 			caption: CAPTION,
-			access_token: USER_TOKEN,
+			access_token: pageAccessToken,
 		});
 		console.log('   Response:', r.status, JSON.stringify(r.body, null, 2));
-
-		if (r.status >= 200 && r.status < 300 && r.body.id) {
-			igContainerId = r.body.id;
-			ok('Container created', { id: igContainerId });
-		} else {
-			fail('Container creation failed', r);
+		if (!(r.status >= 200 && r.status < 300 && r.body.id && r.body.uri)) {
+			fail('Container creation', r);
 			return;
 		}
+		igContainerId = r.body.id;
+		uploadUri = r.body.uri;
+		ok('Container created', { id: igContainerId, uri: uploadUri });
 	}
 
-	// ── 5. Poll Container Status ─────────────────────────────────
+	step('4. Upload Video Bytes to Instagram');
+	{
+		const uploadRes = await fetch(uploadUri, {
+			method: 'POST',
+			headers: {
+				'Authorization': `OAuth ${pageAccessToken}`,
+				'offset': '0',
+				'file_size': videoBuffer.length.toString(),
+				'Content-Type': 'application/octet-stream',
+			},
+			body: videoBuffer,
+		});
+		const body = await uploadRes.text();
+		console.log(`   Response: ${uploadRes.status} ${body}`);
+		if (!uploadRes.ok) { fail('Upload bytes', { status: uploadRes.status, body }); return; }
+		ok('Bytes uploaded', { bytes: videoBuffer.length });
+	}
+
 	step('5. Poll Container Status (up to 5 minutes)');
 	{
 		const maxPolls = 30;
 		const pollInterval = 10_000;
 		for (let i = 1; i <= maxPolls; i++) {
-			const r = await graphGet(igContainerId, {
-				fields: 'status_code,status',
-				access_token: USER_TOKEN,
-			});
-			const status = r.body.status_code;
-			console.log(`   Poll ${i}/${maxPolls}: ${status} ${r.body.status || ''}`);
-
-			if (status === 'FINISHED') {
-				ok('Container ready', r.body);
-				break;
-			} else if (status === 'ERROR' || status === 'EXPIRED') {
+			const r = await graphGet(igContainerId, { fields: 'status_code,status', access_token: pageAccessToken });
+			console.log(`   Poll ${i}/${maxPolls}: ${r.body.status_code} ${r.body.status || ''}`);
+			if (r.body.status_code === 'FINISHED') { ok('Container ready', r.body); break; }
+			if (r.body.status_code === 'ERROR' || r.body.status_code === 'EXPIRED') {
 				fail('Container processing failed', r.body);
 				return;
 			}
-
-			if (i === maxPolls) {
-				fail('Timed out waiting for container', r.body);
-				return;
-			}
+			if (i === maxPolls) { fail('Timed out', r.body); return; }
 			await new Promise(r => setTimeout(r, pollInterval));
 		}
 	}
 
-	// ── 6. Publish Instagram Reel ────────────────────────────────
-	step('6. Publish Instagram Reel (with retry, up to 5 attempts)');
+	step('6. Publish Instagram Reel (with retry)');
 	let igPostId;
 	{
 		for (let attempt = 1; attempt <= 5; attempt++) {
 			console.log(`   Attempt ${attempt}/5…`);
 			const r = await graphPost(`${IG_ACCOUNT}/media_publish`, {
 				creation_id: igContainerId,
-				access_token: USER_TOKEN,
+				access_token: pageAccessToken,
 			});
 			if (r.status >= 200 && r.status < 300 && r.body.id) {
 				igPostId = r.body.id;
 				cleanup.igPostId = igPostId;
 				ok('Published', { id: igPostId });
 				break;
-			} else {
-				console.log(`   Attempt ${attempt} failed (${r.status}): ${r.body?.error?.message || JSON.stringify(r.body)}`);
-				if (attempt < 5) {
-					const delay = attempt * 2000;
-					console.log(`   Waiting ${delay / 1000}s before retry…`);
-					await new Promise(r => setTimeout(r, delay));
-				} else {
-					fail('Publish failed after 5 attempts', r);
-					return;
-				}
 			}
+			console.log(`   Attempt ${attempt} failed (${r.status}): ${r.body?.error?.message || JSON.stringify(r.body)}`);
+			if (attempt < 5) await new Promise(r => setTimeout(r, attempt * 2000));
+			else { fail('Publish failed', r); return; }
 		}
 	}
 
-	// ── 7. Get Instagram Permalink ───────────────────────────────
 	step('7. Get Instagram Permalink');
 	{
-		const r = await graphGet(igPostId, { fields: 'permalink', access_token: USER_TOKEN });
-		if (r.status === 200) {
-			ok('Permalink', r.body);
-		} else {
-			fail('Get permalink', r);
-		}
+		const r = await graphGet(igPostId, { fields: 'permalink', access_token: pageAccessToken });
+		if (r.status === 200) ok('Permalink', r.body);
+		else fail('Get permalink', r);
 	}
 
-	// ── 8. Upload Video to Facebook ──────────────────────────────
 	step('8. Upload Video to Facebook');
 	{
-		console.log('   Uploading video buffer to Facebook…');
 		const fd = new FormData();
 		fd.append('source', new Blob([videoBuffer], { type: 'video/mp4' }), 'video.mp4');
 		fd.append('description', CAPTION);
@@ -448,7 +255,6 @@ async function run() {
 		const url = `${BASE}/${API}/${FB_PAGE}/videos`;
 		const res = await fetch(url, { method: 'POST', body: fd });
 		const body = await res.json();
-
 		if (res.status >= 200 && res.status < 300 && body.id) {
 			cleanup.fbVideoId = body.id;
 			ok('Facebook video uploaded', { id: body.id });
@@ -462,6 +268,10 @@ async function run() {
 }
 
 async function deleteCreated() {
+	if (KEEP) {
+		console.log('\n🗒  --keep specified, leaving posts in place:', cleanup);
+		return;
+	}
 	console.log('\n' + '═'.repeat(60));
 	console.log('🧹 Cleaning up…\n');
 
@@ -472,67 +282,20 @@ async function deleteCreated() {
 		const r = await graphDelete(cleanup.fbVideoId, pageToken);
 		console.log(`   FB video ${cleanup.fbVideoId}: ${r.body.success ? 'deleted ✅' : 'failed ❌ ' + JSON.stringify(r.body)}`);
 	}
-
 	if (cleanup.igPostId) {
-		const r = await graphDelete(cleanup.igPostId, USER_TOKEN);
-		console.log(`   IG post ${cleanup.igPostId}: ${r.body.success ? 'deleted ✅' : 'failed ❌ ' + JSON.stringify(r.body)}`);
+		// Note: Meta's Graph API does not support deleting published Instagram posts —
+		// even with a page token, DELETE returns "(#10) Insufficient permissions". The
+		// posted Reel must be deleted manually via the Instagram app / web UI.
+		const ptr2 = await graphGet(cleanup.igPostId, { fields: 'permalink', access_token: USER_TOKEN });
+		const permalink = ptr2.body?.permalink || '(unknown)';
+		console.log(`   ⚠ IG post ${cleanup.igPostId} cannot be deleted via API.`);
+		console.log(`     Open ${permalink} in Instagram and delete it manually.`);
 	}
-
 	console.log('🧹 Cleanup done.');
 }
 
-async function shutdown() {
-	if (tunnel) {
-		console.log('\n   Closing cloudflared tunnel…');
-		try { await tunnel.close(); } catch { /* ignore */ }
-	}
-	if (httpServer) {
-		console.log('   Stopping local server…');
-		httpServer.close();
-	}
-}
-
-// ── Quick direct-URL test (no tunnel, no re-encode) ─────────
-async function runDirect() {
-	step('DIRECT TEST: Create IG Reel Container with original VIDEO_URL');
-	const r = await graphPost(`${IG_ACCOUNT}/media`, {
-		video_url: VIDEO_URL,
-		media_type: 'REELS',
-		share_to_feed: 'true',
-		caption: CAPTION + ' (direct URL test)',
-		access_token: USER_TOKEN,
-	});
-	console.log('   Response:', r.status, JSON.stringify(r.body, null, 2));
-	if (!(r.status >= 200 && r.status < 300 && r.body.id)) {
-		fail('Container creation', r);
-		return;
-	}
-	const containerId = r.body.id;
-	ok('Container created', { id: containerId });
-
-	step('DIRECT TEST: Poll Container Status');
-	for (let i = 1; i <= 30; i++) {
-		const s = await graphGet(containerId, { fields: 'status_code,status', access_token: USER_TOKEN });
-		console.log(`   Poll ${i}/30: ${s.body.status_code} ${s.body.status || ''}`);
-		if (s.body.status_code === 'FINISHED') { ok('Container ready', s.body); break; }
-		if (s.body.status_code === 'ERROR' || s.body.status_code === 'EXPIRED') {
-			fail('Container failed', s.body);
-			return;
-		}
-		if (i === 30) { fail('Timeout', s.body); return; }
-		await new Promise(r => setTimeout(r, 10_000));
-	}
-}
-
-// ── Entry Point ─────────────────────────────────────────────────
-const mode = process.argv[2];
-if (mode === '--direct') {
-	await runDirect();
-} else {
-	try {
-		await run();
-	} finally {
-		await deleteCreated();
-		await shutdown();
-	}
+try {
+	await run();
+} finally {
+	await deleteCreated();
 }

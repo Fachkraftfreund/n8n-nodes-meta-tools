@@ -2,6 +2,7 @@ import type { IExecuteFunctions } from 'n8n-workflow';
 import type {
 	PageTokenResponse,
 	IgContainerResponse,
+	IgResumableContainerResponse,
 	IgPermalinkResponse,
 	IgStatusResponse,
 	FbPhotoResponse,
@@ -91,19 +92,25 @@ export async function createIgImageContainer(
 	}) as Promise<IgContainerResponse>;
 }
 
-export async function createIgReelContainer(
+/**
+ * Create an IG Reel container using the resumable upload flow.
+ * Returns { id, uri } — POST the video bytes to `uri` via uploadIgReelBytes().
+ *
+ * This avoids needing a public video URL, which is required when n8n runs in
+ * task-runner mode (workflow runs in a separate process from the public HTTP server).
+ */
+export async function createIgReelContainerResumable(
 	ctx: IExecuteFunctions,
 	userAccessToken: string,
 	igAccountId: string,
-	videoUrl: string,
 	caption: string,
 	apiVersion: string,
 	coverUrl?: string,
 	locationId?: string,
-): Promise<IgContainerResponse> {
+): Promise<IgResumableContainerResponse> {
 	const qs: Record<string, string> = {
-		video_url: videoUrl,
 		media_type: 'REELS',
+		upload_type: 'resumable',
 		share_to_feed: 'true',
 		caption,
 		access_token: userAccessToken,
@@ -118,33 +125,72 @@ export async function createIgReelContainer(
 		method: 'POST',
 		url: `${GRAPH_BASE}/${apiVersion}/${igAccountId}/media`,
 		qs,
-	}) as Promise<IgContainerResponse>;
+	}) as Promise<IgResumableContainerResponse>;
+}
+
+/**
+ * Upload video bytes to the resumable upload URI returned by
+ * createIgReelContainerResumable() / createIgCarouselVideoItemContainerResumable().
+ */
+export async function uploadIgVideoBytes(
+	ctx: IExecuteFunctions,
+	userAccessToken: string,
+	uploadUri: string,
+	buffer: Buffer,
+): Promise<void> {
+	await ctx.helpers.httpRequest({
+		method: 'POST',
+		url: uploadUri,
+		headers: {
+			Authorization: `OAuth ${userAccessToken}`,
+			offset: '0',
+			file_size: buffer.length.toString(),
+			'Content-Type': 'application/octet-stream',
+		},
+		body: buffer,
+	});
 }
 
 // ── Instagram: Carousel ─────────────────────────────────────────────
 
-export async function createIgCarouselItemContainer(
+export async function createIgCarouselImageItemContainer(
 	ctx: IExecuteFunctions,
 	userAccessToken: string,
 	igAccountId: string,
-	mediaUrl: string,
-	mediaType: 'image' | 'video',
+	imageUrl: string,
 	apiVersion: string,
 ): Promise<IgContainerResponse> {
-	const qs: Record<string, string> = {
-		is_carousel_item: 'true',
-		access_token: userAccessToken,
-	};
-	if (mediaType === 'image') {
-		qs.image_url = mediaUrl;
-	} else {
-		qs.video_url = mediaUrl;
-	}
 	return ctx.helpers.httpRequest({
 		method: 'POST',
 		url: `${GRAPH_BASE}/${apiVersion}/${igAccountId}/media`,
-		qs,
+		qs: {
+			is_carousel_item: 'true',
+			image_url: imageUrl,
+			access_token: userAccessToken,
+		},
 	}) as Promise<IgContainerResponse>;
+}
+
+/**
+ * Create a resumable upload container for a carousel video item.
+ * Returns { id, uri } — POST the video bytes to `uri` via uploadIgVideoBytes().
+ */
+export async function createIgCarouselVideoItemContainerResumable(
+	ctx: IExecuteFunctions,
+	userAccessToken: string,
+	igAccountId: string,
+	apiVersion: string,
+): Promise<IgResumableContainerResponse> {
+	return ctx.helpers.httpRequest({
+		method: 'POST',
+		url: `${GRAPH_BASE}/${apiVersion}/${igAccountId}/media`,
+		qs: {
+			is_carousel_item: 'true',
+			media_type: 'VIDEO',
+			upload_type: 'resumable',
+			access_token: userAccessToken,
+		},
+	}) as Promise<IgResumableContainerResponse>;
 }
 
 export async function createIgCarouselContainer(

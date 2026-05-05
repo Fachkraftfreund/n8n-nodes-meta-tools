@@ -10,7 +10,6 @@ import { NodeOperationError } from 'n8n-workflow';
 import type { MetaPostParams, MetaPostResult, CarouselItem } from './types';
 import * as graphApi from './utils/graphApi';
 import { convertImage, convertVideo, downloadMedia } from './utils/ffmpeg';
-import { startTempVideoServer } from './utils/tempServer';
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
@@ -326,13 +325,7 @@ async function handleVideo(
 		maxBitrate: params.videoMaxBitrate,
 	});
 
-	// Step 2: Serve the re-encoded video through n8n's own HTTP server.
-	// This piggybacks on n8n's existing public URL so no extra port is needed.
-	const instanceBaseUrl = ctx.getInstanceBaseUrl();
-	const tempServer = await startTempVideoServer(convertedBuffer, instanceBaseUrl);
-	const igVideoUrl = tempServer.url;
-
-	// Step 3: Upload converted video to Facebook (published) — runs in parallel with IG flow
+	// Step 2: Upload converted video to Facebook (published) — runs in parallel with IG flow
 	// Also download cover image (if provided) so we can use it as FB thumbnail
 	let fbThumbnail: { buffer: Buffer; mimeType: string; filename: string } | undefined;
 	if (coverUrl) {
@@ -358,13 +351,18 @@ async function handleVideo(
 		convertedBuffer, 'video.mp4', caption, true, graphApiVersion, locationId, fbThumbnail,
 	);
 
-	// Step 4-6: IG flow — wrapped in try-catch to clean up FB video on failure
+	// Step 3-6: IG flow — wrapped in try-catch to clean up FB video on failure
 	let igPost: { id: string };
 	try {
-		// Step 4: Create IG Reel container (with optional cover image)
-		const igContainer = await graphApi.createIgReelContainer(
+		// Step 3: Create IG Reel container via resumable upload (no public URL needed)
+		const igContainer = await graphApi.createIgReelContainerResumable(
 			ctx, userAccessToken, instagramAccountId,
-			igVideoUrl, caption, graphApiVersion, coverUrl, locationId,
+			caption, graphApiVersion, coverUrl, locationId,
+		);
+
+		// Step 4: POST the video bytes to Instagram's upload endpoint
+		await graphApi.uploadIgVideoBytes(
+			ctx, userAccessToken, igContainer.uri, convertedBuffer,
 		);
 
 		// Step 5: Poll IG container status
@@ -393,9 +391,6 @@ async function handleVideo(
 			);
 		}
 		throw error;
-	} finally {
-		// Always shut down the temp server
-		await tempServer.close();
 	}
 
 	// Step 7: Wait for FB upload to complete
@@ -432,86 +427,77 @@ async function handleCarousel(
 
 	// Step 1: Create child containers for each item
 	const childIds: string[] = [];
-	const videoServers: Array<{ close: () => Promise<void> }> = [];
 
-	try {
-		for (const item of carouselItems) {
-			let mediaUrl = item.mediaUrl;
-
-			if (item.mediaType === 'video') {
-				// Download, convert, and serve video just like single video flow
-				const videoBuffer = await downloadMedia(ctx, item.mediaUrl);
-				const convertedBuffer = await convertVideo(videoBuffer, {
-					videoCodec: params.videoCodec,
-					crf: params.videoCrf,
-					preset: params.videoPreset,
-					fps: params.videoFps,
-					audioCodec: params.audioCodec,
-					audioBitrate: params.audioBitrate,
-					audioChannels: params.audioChannels,
-					audioSampleRate: params.audioSampleRate,
-					maxWidth: params.videoMaxWidth,
-					maxHeight: params.videoMaxHeight,
-					maxBitrate: params.videoMaxBitrate,
-				});
-				const instanceBaseUrl = ctx.getInstanceBaseUrl();
-				const tempServer = await startTempVideoServer(convertedBuffer, instanceBaseUrl);
-				videoServers.push(tempServer);
-				mediaUrl = tempServer.url;
-			}
-
-			const child = await graphApi.createIgCarouselItemContainer(
+	for (const item of carouselItems) {
+		if (item.mediaType === 'image') {
+			const child = await graphApi.createIgCarouselImageItemContainer(
 				ctx, userAccessToken, instagramAccountId,
-				mediaUrl, item.mediaType, graphApiVersion,
+				item.mediaUrl, graphApiVersion,
 			);
 			childIds.push(child.id);
+		} else {
+			// Video carousel item: re-encode locally, upload bytes via resumable API
+			const videoBuffer = await downloadMedia(ctx, item.mediaUrl);
+			const convertedBuffer = await convertVideo(videoBuffer, {
+				videoCodec: params.videoCodec,
+				crf: params.videoCrf,
+				preset: params.videoPreset,
+				fps: params.videoFps,
+				audioCodec: params.audioCodec,
+				audioBitrate: params.audioBitrate,
+				audioChannels: params.audioChannels,
+				audioSampleRate: params.audioSampleRate,
+				maxWidth: params.videoMaxWidth,
+				maxHeight: params.videoMaxHeight,
+				maxBitrate: params.videoMaxBitrate,
+			});
 
-			// Poll video items until ready
-			if (item.mediaType === 'video') {
-				await pollIgContainer(ctx, userAccessToken, child.id, graphApiVersion);
-			}
-		}
-
-		// Step 2: Create parent carousel container
-		const carouselContainer = await graphApi.createIgCarouselContainer(
-			ctx, userAccessToken, instagramAccountId,
-			childIds, caption, graphApiVersion, locationId,
-		);
-
-		// Step 3: Publish carousel
-		const igPost = await publishIgContainerWithRetry(
-			ctx, userAccessToken, instagramAccountId, carouselContainer.id, graphApiVersion,
-		);
-
-		// Step 4: Upload first image to Facebook as the feed post photo
-		const firstImage = carouselItems.find((item) => item.mediaType === 'image');
-		let fbPostId = '';
-		if (firstImage) {
-			const fbPhoto = await graphApi.uploadFbPhotoFromUrl(
-				ctx, pageAccessToken, facebookPageId, firstImage.mediaUrl, false, graphApiVersion,
+			const child = await graphApi.createIgCarouselVideoItemContainerResumable(
+				ctx, userAccessToken, instagramAccountId, graphApiVersion,
 			);
-			const fbFeedPost = await graphApi.createFbFeedPost(
-				ctx, pageAccessToken, facebookPageId, caption, fbPhoto.id, graphApiVersion, locationId,
+			await graphApi.uploadIgVideoBytes(
+				ctx, userAccessToken, child.uri, convertedBuffer,
 			);
-			fbPostId = fbFeedPost.id;
-		}
-
-		// Step 5: Get IG permalink
-		const igPermalink = await graphApi.getIgPermalink(
-			ctx, userAccessToken, igPost.id, graphApiVersion,
-		);
-
-		return {
-			instagram_post_id: igPost.id,
-			instagram_permalink: igPermalink.permalink,
-			facebook_post_id: fbPostId,
-			location_id: locationId,
-		};
-	} finally {
-		for (const server of videoServers) {
-			await server.close();
+			await pollIgContainer(ctx, userAccessToken, child.id, graphApiVersion);
+			childIds.push(child.id);
 		}
 	}
+
+	// Step 2: Create parent carousel container
+	const carouselContainer = await graphApi.createIgCarouselContainer(
+		ctx, userAccessToken, instagramAccountId,
+		childIds, caption, graphApiVersion, locationId,
+	);
+
+	// Step 3: Publish carousel
+	const igPost = await publishIgContainerWithRetry(
+		ctx, userAccessToken, instagramAccountId, carouselContainer.id, graphApiVersion,
+	);
+
+	// Step 4: Upload first image to Facebook as the feed post photo
+	const firstImage = carouselItems.find((item) => item.mediaType === 'image');
+	let fbPostId = '';
+	if (firstImage) {
+		const fbPhoto = await graphApi.uploadFbPhotoFromUrl(
+			ctx, pageAccessToken, facebookPageId, firstImage.mediaUrl, false, graphApiVersion,
+		);
+		const fbFeedPost = await graphApi.createFbFeedPost(
+			ctx, pageAccessToken, facebookPageId, caption, fbPhoto.id, graphApiVersion, locationId,
+		);
+		fbPostId = fbFeedPost.id;
+	}
+
+	// Step 5: Get IG permalink
+	const igPermalink = await graphApi.getIgPermalink(
+		ctx, userAccessToken, igPost.id, graphApiVersion,
+	);
+
+	return {
+		instagram_post_id: igPost.id,
+		instagram_permalink: igPermalink.permalink,
+		facebook_post_id: fbPostId,
+		location_id: locationId,
+	};
 }
 
 // ── Node Definition ────────────────────────────────────────────────
