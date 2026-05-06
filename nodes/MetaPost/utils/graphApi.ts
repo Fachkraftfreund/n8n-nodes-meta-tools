@@ -395,20 +395,43 @@ export async function createFbFeedPost(
 	apiVersion: string,
 	placeId?: string,
 ): Promise<FbFeedPostResponse> {
-	const formData = new FormData();
-	formData.append('message', message);
 	const ids = Array.isArray(mediaFbIds) ? mediaFbIds : [mediaFbIds];
-	ids.forEach((id, idx) => {
-		formData.append(`attached_media[${idx}]`, JSON.stringify({ media_fbid: id }));
-	});
-	if (placeId) formData.append('place', placeId);
-	formData.append('access_token', pageAccessToken);
 
-	return ctx.helpers.httpRequest({
-		method: 'POST',
-		url: `${GRAPH_BASE}/${apiVersion}/${pageId}/feed`,
-		body: formData,
-	}) as Promise<FbFeedPostResponse>;
+	// Retry on transient Graph API errors (codes 1, 2 — "Please reduce the amount
+	// of data" / "Service temporarily unavailable"). Photo upload often races feed
+	// post creation; the second attempt almost always succeeds.
+	let lastErr: unknown;
+	for (let attempt = 1; attempt <= 4; attempt++) {
+		const formData = new FormData();
+		formData.append('message', message);
+		ids.forEach((id, idx) => {
+			formData.append(`attached_media[${idx}]`, JSON.stringify({ media_fbid: id }));
+		});
+		if (placeId) formData.append('place', placeId);
+		formData.append('access_token', pageAccessToken);
+
+		const resp = (await ctx.helpers.httpRequest({
+			method: 'POST',
+			url: `${GRAPH_BASE}/${apiVersion}/${pageId}/feed`,
+			body: formData,
+			ignoreHttpStatusErrors: true,
+			returnFullResponse: true,
+		})) as FullResponse;
+
+		if (resp.statusCode >= 200 && resp.statusCode < 300 && resp.body?.id) {
+			return resp.body as FbFeedPostResponse;
+		}
+
+		const code = resp.body?.error?.code;
+		const msg = resp.body?.error?.message || JSON.stringify(resp.body);
+		lastErr = new Error(`Facebook feed post failed (HTTP ${resp.statusCode}, code ${code}): ${msg}`);
+
+		// Retry only on transient codes (1 = API_UNKNOWN, 2 = API_SERVICE, 4 = rate limit)
+		const retryable = code === 1 || code === 2 || code === 4 || resp.statusCode >= 500;
+		if (!retryable || attempt === 4) break;
+		await new Promise((r) => setTimeout(r, attempt * 2000));
+	}
+	throw lastErr;
 }
 
 // ── Location Search ─────────────────────────────────────────────────

@@ -223,10 +223,22 @@ async function handleImage(
 		ctx, userAccessToken, instagramAccountId, igContainerId, graphApiVersion,
 	);
 
-	// Step 4: Upload photo to Facebook (if not already done during conversion)
+	// Step 4: Upload photo to Facebook (if not already done during conversion).
+	// Always go through download + convertImage + buffer upload — Facebook's /photos
+	// endpoint rejects URLs whose target exceeds 10 MB (subcode 1366046), even when
+	// Instagram accepts the same URL. Local conversion also normalises the format.
 	if (!fbPhotoId) {
-		const fbPhoto = await graphApi.uploadFbPhotoFromUrl(
-			ctx, pageAccessToken, facebookPageId, mediaUrl, false, graphApiVersion,
+		const imageBuffer = await downloadMedia(ctx, mediaUrl);
+		const convertedBuffer = await convertImage(imageBuffer, {
+			maxWidth: params.imageMaxWidth,
+			maxHeight: params.imageMaxHeight,
+			outputFormat: params.imageOutputFormat,
+		});
+		const ext = params.imageOutputFormat;
+		const mime = ext === 'jpeg' ? 'image/jpeg' : 'image/png';
+		const fbPhoto = await graphApi.uploadFbPhotoFromBuffer(
+			ctx, pageAccessToken, facebookPageId,
+			convertedBuffer, `photo.${ext}`, mime, false, graphApiVersion,
 		);
 		fbPhotoId = fbPhoto.id;
 	}
@@ -485,10 +497,22 @@ async function handleCarousel(
 	const imageItems = carouselItems.filter((item) => item.mediaType === 'image');
 	let fbPostId = '';
 	if (imageItems.length > 0) {
+		// Pre-download + convert each image so the FB upload uses a buffer.
+		// FB rejects /photos URL ingestion when the source exceeds 10 MB
+		// (subcode 1366046), even for URLs that work fine for Instagram.
 		const photoIds = await Promise.all(
 			imageItems.map(async (item) => {
-				const fbPhoto = await graphApi.uploadFbPhotoFromUrl(
-					ctx, pageAccessToken, facebookPageId, item.mediaUrl, false, graphApiVersion,
+				const imageBuffer = await downloadMedia(ctx, item.mediaUrl);
+				const convertedBuffer = await convertImage(imageBuffer, {
+					maxWidth: params.imageMaxWidth,
+					maxHeight: params.imageMaxHeight,
+					outputFormat: params.imageOutputFormat,
+				});
+				const ext = params.imageOutputFormat;
+				const mime = ext === 'jpeg' ? 'image/jpeg' : 'image/png';
+				const fbPhoto = await graphApi.uploadFbPhotoFromBuffer(
+					ctx, pageAccessToken, facebookPageId,
+					convertedBuffer, `photo.${ext}`, mime, false, graphApiVersion,
 				);
 				return fbPhoto.id;
 			}),
