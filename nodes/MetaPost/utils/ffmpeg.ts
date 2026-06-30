@@ -81,7 +81,10 @@ export async function convertImage(
 		'-i', 'pipe:0',
 		'-vf', `scale=${options.maxWidth}:${options.maxHeight}:force_original_aspect_ratio=decrease`,
 		'-map_metadata', '-1',
-		'-f', 'image2',
+		// image2pipe (not image2) is required to stream a single still image to
+		// pipe:1. With ffmpeg 7.x the image2 muxer treats pipe output as a numbered
+		// sequence and aborts ("Cannot write more than one file with the same name").
+		'-f', 'image2pipe',
 		'-c:v', codec,
 	];
 
