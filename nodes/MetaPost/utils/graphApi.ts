@@ -173,6 +173,16 @@ export async function uploadIgVideoBytes(
 	if (resp.statusCode >= 400) {
 		throw new Error(formatGraphError('Instagram video byte upload', resp));
 	}
+	// The rupload endpoint returns HTTP 200 with { success: true } only when the
+	// bytes were actually accepted. Anything else means the video did not arrive —
+	// fail fast with the raw response instead of letting the container hang in
+	// IN_PROGRESS until the poll times out.
+	if (resp.body?.success !== true) {
+		throw new Error(
+			`Instagram video byte upload did not confirm success (HTTP ${resp.statusCode}, ` +
+			`${buffer.length} bytes sent): ${JSON.stringify(resp.body)}`,
+		);
+	}
 }
 
 // ── Instagram: Carousel ─────────────────────────────────────────────

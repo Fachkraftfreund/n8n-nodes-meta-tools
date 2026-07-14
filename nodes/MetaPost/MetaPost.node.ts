@@ -281,7 +281,7 @@ async function pollIgContainer(
 	apiVersion: string,
 ): Promise<void> {
 	const pollInterval = 10000;
-	const maxTotalMs = 8 * 60 * 1000; // hard cap including rate-limit backoff
+	const maxTotalMs = 3 * 60 * 1000; // hard cap including rate-limit backoff
 	const maxRateLimitRetries = 8;
 	const start = Date.now();
 	let rateLimitRetries = 0;
