@@ -7,12 +7,22 @@ import type {
 } from 'n8n-workflow';
 import { NodeOperationError } from 'n8n-workflow';
 
-import type { MetaPostParams, MetaPostResult, CarouselItem } from './types';
+import type { MetaPostParams, MetaPostResult, CarouselItem, IgStatusResponse } from './types';
 import * as graphApi from './utils/graphApi';
 import { convertImage, convertVideo, downloadMedia } from './utils/ffmpeg';
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * True for Meta's transient throttling errors — safe to back off and retry
+ * rather than fail the whole post. Covers app (#4), user (#17), page (#32),
+ * temporary (#341) and custom (#613) rate limits.
+ */
+function isRateLimitError(err: unknown): boolean {
+	const msg = (err as Error)?.message ?? '';
+	return /\(#(4|17|32|341|613)\)/.test(msg) || /request limit reached/i.test(msg);
 }
 
 function formatIgApiError(resp: graphApi.FullResponse): string {
@@ -270,27 +280,48 @@ async function pollIgContainer(
 	containerId: string,
 	apiVersion: string,
 ): Promise<void> {
-	const maxPolls = 30;
 	const pollInterval = 10000;
+	const maxTotalMs = 8 * 60 * 1000; // hard cap including rate-limit backoff
+	const maxRateLimitRetries = 8;
+	const start = Date.now();
+	let rateLimitRetries = 0;
 
-	for (let attempt = 0; attempt < maxPolls; attempt++) {
+	while (Date.now() - start < maxTotalMs) {
 		await sleep(pollInterval);
-		const status = await graphApi.getIgContainerStatus(
-			ctx, userAccessToken, containerId, apiVersion,
-		);
+
+		let status: IgStatusResponse;
+		try {
+			status = await graphApi.getIgContainerStatus(
+				ctx, userAccessToken, containerId, apiVersion,
+			);
+		} catch (err) {
+			// Meta rate-limit (#4 etc.) is transient: back off exponentially and
+			// keep polling instead of failing the whole reel.
+			if (isRateLimitError(err) && rateLimitRetries < maxRateLimitRetries) {
+				rateLimitRetries++;
+				await sleep(Math.min(pollInterval * 2 ** rateLimitRetries, 60000));
+				continue;
+			}
+			throw err;
+		}
+		rateLimitRetries = 0;
 
 		if (status.status_code === 'FINISHED') return;
 
 		if (status.status_code === 'ERROR' || status.status_code === 'EXPIRED') {
 			throw new Error(
 				`Instagram Reel processing failed: ${status.status || status.status_code}. ` +
-				'Ensure the video URL is publicly accessible and the video meets Instagram Reels ' +
-				'requirements (MP4 H.264, max 5 Mbps bitrate, max 90s, 9:16 aspect ratio recommended).',
+				'Ensure the video meets Instagram Reels requirements ' +
+				'(MP4 H.264, max 5 Mbps bitrate, max 90s, 9:16 aspect ratio recommended).',
 			);
 		}
 	}
 
-	throw new Error('Instagram Reel processing timed out after 5 minutes of polling');
+	throw new Error(
+		'Instagram Reel status polling timed out. If this recurs with "(#4) Application request ' +
+		'limit reached", your Meta app is hitting its API rate limit — reduce call volume or ' +
+		'request a higher limit in the Meta App Dashboard.',
+	);
 }
 
 async function handleVideo(
