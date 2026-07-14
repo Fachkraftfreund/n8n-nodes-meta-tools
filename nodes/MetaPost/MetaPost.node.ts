@@ -280,19 +280,18 @@ async function pollIgContainer(
 	containerId: string,
 	apiVersion: string,
 ): Promise<void> {
-	const pollInterval = 10000;
-	const maxTotalMs = 3 * 60 * 1000; // hard cap including rate-limit backoff
-	const maxRateLimitRetries = 8;
+	const maxTotalMs = 3 * 60 * 1000;
 	const start = Date.now();
-	let rateLimitRetries = 0;
-	// Diagnostics for the timeout message so we can tell WHY it never finished.
+	// Start at 20s and grow the interval to keep the number of status calls low —
+	// polling is the biggest consumer of Meta's per-hour API quota.
+	let interval = 20000;
+	let rateLimitRetried = false;
 	let pollCount = 0;
-	let rateLimitHits = 0;
 	let lastStatusCode = '(none)';
 	let lastStatusDetail = '';
 
 	while (Date.now() - start < maxTotalMs) {
-		await sleep(pollInterval);
+		await sleep(interval);
 
 		let status: IgStatusResponse;
 		try {
@@ -300,17 +299,25 @@ async function pollIgContainer(
 				ctx, userAccessToken, containerId, apiVersion,
 			);
 		} catch (err) {
-			// Meta rate-limit (#4 etc.) is transient: back off exponentially and
-			// keep polling instead of failing the whole reel.
-			if (isRateLimitError(err) && rateLimitRetries < maxRateLimitRetries) {
-				rateLimitRetries++;
-				rateLimitHits++;
-				await sleep(Math.min(pollInterval * 2 ** rateLimitRetries, 60000));
-				continue;
+			// Rate limit (#4 etc.) is app-wide — retrying just burns more of the
+			// exhausted quota. Retry once for a brief spike, then fail fast with
+			// actionable guidance instead of hammering the API.
+			if (isRateLimitError(err)) {
+				if (!rateLimitRetried) {
+					rateLimitRetried = true;
+					await sleep(45000);
+					continue;
+				}
+				throw new Error(
+					'Instagram Reel could not be published: Meta "(#4) Application request limit ' +
+					'reached". Your Meta app is over its API rate limit — this is app-wide, not ' +
+					'specific to this post. Wait ~1 hour without calling the Meta API (pause other ' +
+					'Meta workflows too), reduce call volume, or request a higher limit in the Meta ' +
+					'App Dashboard, then retry.',
+				);
 			}
 			throw err;
 		}
-		rateLimitRetries = 0;
 		pollCount++;
 		lastStatusCode = status.status_code ?? '(empty)';
 		lastStatusDetail = status.status ?? '';
@@ -324,22 +331,16 @@ async function pollIgContainer(
 				'(MP4 H.264, max 5 Mbps bitrate, max 90s, 9:16 aspect ratio recommended).',
 			);
 		}
+
+		interval = Math.min(interval + 5000, 30000);
 	}
 
 	const mins = Math.round((Date.now() - start) / 60000);
-	const diag = `after ${mins} min (${pollCount} status polls, ${rateLimitHits} rate-limit hits, ` +
-		`last status_code=${lastStatusCode}${lastStatusDetail ? `, detail="${lastStatusDetail}"` : ''})`;
-	if (rateLimitHits > 0 && pollCount === 0) {
-		throw new Error(
-			`Instagram Reel status polling timed out ${diag}. Every status check hit Meta's ` +
-			'"(#4) Application request limit reached" — your Meta app is over its API rate limit. ' +
-			'Reduce call volume or request a higher limit in the Meta App Dashboard.',
-		);
-	}
 	throw new Error(
-		`Instagram Reel status polling timed out ${diag}. The container never reached FINISHED, so ` +
-		'the video is not being processed by Instagram. Likely the resumable byte upload was ' +
-		'incomplete or the video does not meet Reels requirements (MP4 H.264, max 5 Mbps, max 90s).',
+		`Instagram Reel status polling timed out after ${mins} min (${pollCount} status polls, ` +
+		`last status_code=${lastStatusCode}${lastStatusDetail ? `, detail="${lastStatusDetail}"` : ''}). ` +
+		'The container never reached FINISHED — the video is likely still processing or does not meet ' +
+		'Reels requirements (MP4 H.264, max 5 Mbps bitrate, max 90s).',
 	);
 }
 
