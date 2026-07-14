@@ -285,6 +285,11 @@ async function pollIgContainer(
 	const maxRateLimitRetries = 8;
 	const start = Date.now();
 	let rateLimitRetries = 0;
+	// Diagnostics for the timeout message so we can tell WHY it never finished.
+	let pollCount = 0;
+	let rateLimitHits = 0;
+	let lastStatusCode = '(none)';
+	let lastStatusDetail = '';
 
 	while (Date.now() - start < maxTotalMs) {
 		await sleep(pollInterval);
@@ -299,12 +304,16 @@ async function pollIgContainer(
 			// keep polling instead of failing the whole reel.
 			if (isRateLimitError(err) && rateLimitRetries < maxRateLimitRetries) {
 				rateLimitRetries++;
+				rateLimitHits++;
 				await sleep(Math.min(pollInterval * 2 ** rateLimitRetries, 60000));
 				continue;
 			}
 			throw err;
 		}
 		rateLimitRetries = 0;
+		pollCount++;
+		lastStatusCode = status.status_code ?? '(empty)';
+		lastStatusDetail = status.status ?? '';
 
 		if (status.status_code === 'FINISHED') return;
 
@@ -317,10 +326,20 @@ async function pollIgContainer(
 		}
 	}
 
+	const mins = Math.round((Date.now() - start) / 60000);
+	const diag = `after ${mins} min (${pollCount} status polls, ${rateLimitHits} rate-limit hits, ` +
+		`last status_code=${lastStatusCode}${lastStatusDetail ? `, detail="${lastStatusDetail}"` : ''})`;
+	if (rateLimitHits > 0 && pollCount === 0) {
+		throw new Error(
+			`Instagram Reel status polling timed out ${diag}. Every status check hit Meta's ` +
+			'"(#4) Application request limit reached" — your Meta app is over its API rate limit. ' +
+			'Reduce call volume or request a higher limit in the Meta App Dashboard.',
+		);
+	}
 	throw new Error(
-		'Instagram Reel status polling timed out. If this recurs with "(#4) Application request ' +
-		'limit reached", your Meta app is hitting its API rate limit — reduce call volume or ' +
-		'request a higher limit in the Meta App Dashboard.',
+		`Instagram Reel status polling timed out ${diag}. The container never reached FINISHED, so ` +
+		'the video is not being processed by Instagram. Likely the resumable byte upload was ' +
+		'incomplete or the video does not meet Reels requirements (MP4 H.264, max 5 Mbps, max 90s).',
 	);
 }
 
