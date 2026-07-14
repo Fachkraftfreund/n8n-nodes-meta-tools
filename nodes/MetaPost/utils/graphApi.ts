@@ -54,6 +54,19 @@ export interface FullResponse {
 	statusCode: number;
 }
 
+/**
+ * Build a descriptive error string from a Graph API response, surfacing
+ * Meta's real error code/subcode/message instead of a bare "status code 403".
+ */
+export function formatGraphError(context: string, resp: FullResponse): string {
+	const err = resp.body?.error;
+	const parts = [`HTTP ${resp.statusCode}`];
+	if (err?.code) parts.push(`code ${err.code}`);
+	if (err?.error_subcode) parts.push(`subcode ${err.error_subcode}`);
+	const msg = err?.error_user_msg || err?.message || JSON.stringify(resp.body);
+	return `${context} failed (${parts.join(', ')}): ${msg}`;
+}
+
 export async function tryCreateIgImageContainer(
 	ctx: IExecuteFunctions,
 	userAccessToken: string,
@@ -121,11 +134,17 @@ export async function createIgReelContainerResumable(
 	if (locationId) {
 		qs.location_id = locationId;
 	}
-	return ctx.helpers.httpRequest({
+	const resp = (await ctx.helpers.httpRequest({
 		method: 'POST',
 		url: `${GRAPH_BASE}/${apiVersion}/${igAccountId}/media`,
 		qs,
-	}) as Promise<IgResumableContainerResponse>;
+		ignoreHttpStatusErrors: true,
+		returnFullResponse: true,
+	})) as FullResponse;
+	if (resp.statusCode >= 400 || !resp.body?.id) {
+		throw new Error(formatGraphError('Instagram Reel container creation', resp));
+	}
+	return resp.body as IgResumableContainerResponse;
 }
 
 /**
@@ -138,7 +157,7 @@ export async function uploadIgVideoBytes(
 	uploadUri: string,
 	buffer: Buffer,
 ): Promise<void> {
-	await ctx.helpers.httpRequest({
+	const resp = (await ctx.helpers.httpRequest({
 		method: 'POST',
 		url: uploadUri,
 		headers: {
@@ -148,7 +167,12 @@ export async function uploadIgVideoBytes(
 			'Content-Type': 'application/octet-stream',
 		},
 		body: buffer,
-	});
+		ignoreHttpStatusErrors: true,
+		returnFullResponse: true,
+	})) as FullResponse;
+	if (resp.statusCode >= 400) {
+		throw new Error(formatGraphError('Instagram video byte upload', resp));
+	}
 }
 
 // ── Instagram: Carousel ─────────────────────────────────────────────
@@ -224,11 +248,17 @@ export async function getIgContainerStatus(
 	containerId: string,
 	apiVersion: string,
 ): Promise<IgStatusResponse> {
-	return ctx.helpers.httpRequest({
+	const resp = (await ctx.helpers.httpRequest({
 		method: 'GET',
 		url: `${GRAPH_BASE}/${apiVersion}/${containerId}`,
 		qs: { fields: 'status_code,status', access_token: userAccessToken },
-	}) as Promise<IgStatusResponse>;
+		ignoreHttpStatusErrors: true,
+		returnFullResponse: true,
+	})) as FullResponse;
+	if (resp.statusCode >= 400) {
+		throw new Error(formatGraphError('Instagram container status check', resp));
+	}
+	return resp.body as IgStatusResponse;
 }
 
 // ── Instagram: Publish ─────────────────────────────────────────────
@@ -257,11 +287,17 @@ export async function getIgPermalink(
 	igPostId: string,
 	apiVersion: string,
 ): Promise<IgPermalinkResponse> {
-	return ctx.helpers.httpRequest({
+	const resp = (await ctx.helpers.httpRequest({
 		method: 'GET',
 		url: `${GRAPH_BASE}/${apiVersion}/${igPostId}`,
 		qs: { fields: 'permalink', access_token: userAccessToken },
-	}) as Promise<IgPermalinkResponse>;
+		ignoreHttpStatusErrors: true,
+		returnFullResponse: true,
+	})) as FullResponse;
+	if (resp.statusCode >= 400) {
+		throw new Error(formatGraphError('Instagram permalink fetch', resp));
+	}
+	return resp.body as IgPermalinkResponse;
 }
 
 // ── Facebook: Photo Upload ─────────────────────────────────────────
@@ -349,11 +385,17 @@ export async function uploadFbVideoFromBuffer(
 	}
 	formData.append('access_token', pageAccessToken);
 
-	return ctx.helpers.httpRequest({
+	const resp = (await ctx.helpers.httpRequest({
 		method: 'POST',
 		url: `${GRAPH_BASE}/${apiVersion}/${pageId}/videos`,
 		body: formData,
-	}) as Promise<FbVideoResponse>;
+		ignoreHttpStatusErrors: true,
+		returnFullResponse: true,
+	})) as FullResponse;
+	if (resp.statusCode >= 400 || !resp.body?.id) {
+		throw new Error(formatGraphError('Facebook video upload', resp));
+	}
+	return resp.body as FbVideoResponse;
 }
 
 export async function getFbVideoSource(
